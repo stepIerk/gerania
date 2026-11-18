@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIconFile</key>
+	<string>GeraIcon</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.sykorn.gerania</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>gerania</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSAccentColorName</key>
+	<string>AccentColor</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Гера слушает микрофон, чтобы распознавать ваши запросы и команды остановки.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Гера распознаёт вашу речь локально, на этом Mac.</string>
+</dict>
+</plist>
