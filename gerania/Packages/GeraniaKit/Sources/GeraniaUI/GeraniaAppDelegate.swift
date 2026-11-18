@@ -45,7 +45,11 @@ public final class GeraniaAppDelegate: NSObject, NSApplicationDelegate {
             await model.startVoice()
             return
         }
-        GeraniaAppRoot.shared.mainWindow.show()
+        if OnboardingModel.isCompleted() {
+            GeraniaAppRoot.shared.mainWindow.show()
+        } else {
+            GeraniaAppRoot.shared.onboarding.show()
+        }
     }
 
     /// `--gera-debug-state=<name>` and `--gera-debug-input` open the panels from the

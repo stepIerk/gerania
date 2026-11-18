@@ -29,6 +29,9 @@ public struct MenuBarContent: View {
         Button("Окно Гера…") {
             onOpenWindow()
         }
+        Button("Мастер настройки…") {
+            GeraniaAppRoot.shared.onboarding.show()
+        }
         Divider()
         Button("Выход") {
             NSApp.terminate(nil)
