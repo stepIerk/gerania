@@ -12,9 +12,12 @@ import Foundation
 public actor MemoryFileStore {
     /// `~/.hermes/memories`, or `<HERMES_HOME>/memories`.
     public nonisolated let directory: URL
+    /// Character budgets, read from `config.yaml` or Hermes defaults.
+    public nonisolated let limits: MemoryLimits
 
-    public init(directory: URL? = nil) {
+    public init(directory: URL? = nil, limits: MemoryLimits = .standard) {
         self.directory = directory ?? Self.defaultDirectory()
+        self.limits = limits
     }
 
     public nonisolated static func defaultDirectory() -> URL {
@@ -122,6 +125,7 @@ public actor MemoryFileStore {
             kind: kind,
             url: path,
             raw: raw,
+            limit: limits.limit(for: kind),
             fingerprint: fingerprint
         )
     }

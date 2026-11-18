@@ -23,7 +23,7 @@ public final class MemoryModel {
     /// Folder with `USER.md` and `MEMORY.md`; shown at the bottom of the tab.
     public nonisolated let directory: URL
 
-    public init(store: MemoryFileStore = MemoryFileStore()) {
+    public init(store: MemoryFileStore = MemoryFileStore(limits: MemoryLimits.load())) {
         self.store = store
         directory = store.directory
     }

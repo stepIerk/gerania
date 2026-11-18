@@ -1,6 +1,6 @@
 # План: Гера как Siri для программистов и студентов
 
-Дата: 2026-11-17. Статус: этап 1 закрыт; этап 2 закрыт (2.1, 2.2, 2.3 сделаны; живой сценарий — по желанию); этап 3 закрыт (3.1, 3.2 текстовой формой, 3.3 чипом в HUD; предпросмотр и голосовое знакомство — по желанию).
+Дата: 2026-11-17. Статус: этап 1 закрыт; этап 2 закрыт (2.1, 2.2, 2.3 сделаны; живой сценарий — по желанию); этап 3 закрыт полностью (3.1, 3.2 текстовой формой, 3.3 чипом в HUD, предпросмотр и лимиты из `config.yaml`); этап 4 — 4.1 и шаблон 4.3 сделаны, 4.2 пока без watcher/уведомлений.
 
 ## Цель
 
@@ -218,8 +218,9 @@ Gerania должна объяснить это человеку, а не пад�
 
 Статус: закрыт (2026-11-18). 3.1 и 3.2 сделаны; знакомство реализовано текстовой
 формой (не голосом). 3.3: чип «Запоминаю» в HUD есть, предпросмотр «что Геря
-узнает в новой сессии» в настройках остался опциональным. Лимиты — дефолты Hermes
-(1375/2200), чтение из `config.yaml` не делали.
+узнает в новой сессии» в настройках сделан (`MemoryBlockFormatter` +
+`MemoryPreviewView`). Лимиты читаются из `~/.hermes/config.yaml`
+(`memory_char_limit`/`user_char_limit`) с откатом на 1375/2200.
 
 Hermes уже хранит два файла в `~/.hermes/memories/`:
 
@@ -276,6 +277,13 @@ Hermes уже хранит два файла в `~/.hermes/memories/`:
 
 ## Этап 4. Планирование (2–3 дня)
 
+Статус (2026-11-18): 4.1 закрыт, шаблон утреннего брифинга из 4.3 добавлен.
+4.2 — частично: вкладка показывает последние `cron/output/{job_id}/*.md` и открывает
+их в Finder/редакторе, но FSEvents-наблюдателя, уведомлений, HUD-карточки и
+`UserDefaults`-отметок о прочитанном пока нет. Ошибки запусков видны из полей
+`last_status`/`last_error` в `jobs.json`; `executions.db` и `hermes cron incidents`
+не подключены.
+
 Hermes уже умеет всё планирование: `cronjob_manage` в чате, `hermes cron` в CLI,
 `jobs.json`, историю запусков и 16 готовых blueprint-шаблонов
 (`morning-brief`, `workday-start`, `custom-reminder`, `weekly-review`, `learn-daily`,
@@ -314,10 +322,14 @@ Hermes уже умеет всё планирование: `cronjob_manage` в ч
 
 ### Файлы
 
-- `HermesKit/CronJobsStore.swift` (новый) — чтение `jobs.json`, запуск CLI-команд.
-- `GeraniaUI/CronOutputWatcher.swift` (новый).
-- `GeraniaUI/Settings/PlansTab.swift` (новый), `PlanTemplates.swift` (новый).
+- `HermesKit/CronJob.swift` (новый) — модель задачи и разбор `jobs.json`.
+- `HermesKit/CronJobsStore.swift` (новый) — чтение `jobs.json`, запуск CLI-команд
+  через инъектируемый runner (в бою — `ChildProcess`).
+- `HermesKit/CronOutput.swift` (новый) — последние результаты из `cron/output/`.
+- `GeraniaUI/Settings/PlansModel.swift`, `PlansTab.swift`, `PlanJobRow.swift`,
+  `PlanOutputsSection.swift`, `PlanCreateSheet.swift`, `PlanTemplates.swift` (новые).
 - `SettingsTabs.swift` — вкладка «Планы».
+- `GeraniaUI/CronOutputWatcher.swift` — не создан (остаток 4.2).
 
 ### Готово когда
 

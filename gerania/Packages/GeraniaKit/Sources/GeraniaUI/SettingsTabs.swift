@@ -39,6 +39,8 @@ public struct SettingsTabs: View {
                 .tabItem { Text("Голос") }
             MemoryTab(model: memory)
                 .tabItem { Text("Память") }
+            PlansTab(settings: settings)
+                .tabItem { Text("Планы") }
             chats
                 .tabItem { Text("Чаты") }
             audit

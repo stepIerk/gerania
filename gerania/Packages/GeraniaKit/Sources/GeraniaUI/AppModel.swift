@@ -100,7 +100,7 @@ public final class AppModel {
         self.hud = hud
         self.chats = chats ?? ChatsModel(settings: settings)
         self.auditLog = auditLog ?? AuditLog()
-        memory = MemoryModel(store: memoryStore ?? MemoryFileStore())
+        memory = MemoryModel(store: memoryStore ?? MemoryFileStore(limits: MemoryLimits.load()))
         speaker = Speaker()
         sounds = SoundPlayer()
         speaker?.onSpeakingChanged = { [weak self] speaking in

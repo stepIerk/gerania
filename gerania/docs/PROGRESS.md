@@ -1036,3 +1036,45 @@ Swift (VoiceKit):
 - Живой сценарий: «Гера, запомни: пары по средам в 10:00» → запись в `USER.md`,
   видна во вкладке и в следующей сессии; «забудь про …» удаляет одну запись;
   переполнение лимита не портит файл.
+
+## 2026-11-18 — этап 3 закрыт, этап 4: вкладка «Планы»
+
+Сделано:
+- 3.3: `MemoryLimits` читает `memory_char_limit`/`user_char_limit` из
+  `~/.hermes/config.yaml` (или `<HERMES_HOME>/config.yaml`); битые и неизвестные
+  значения откатываются на 1375/2200, `MemoryFileStore` применяет лимиты.
+- 3.3: `MemoryBlockFormatter` собирает тот же блок, что Hermes кладёт в промпт
+  (разделитель 46 `═`, заголовки, `N% — cur/lim chars`); `MemoryPreviewView`
+  показывает его в `MemoryTab` под колонками.
+- 4.1: `HermesKit/CronJob` — модель `jobs.json` (interval/once/cron, state,
+  next/last, repeat) и ISO-даты с шестизначными микросекундами.
+- 4.1: `CronJobsStore` (actor) — read-only чтение `jobs.json` и действия
+  `hermes cron pause|resume|run|remove|create` через инъектируемый runner;
+  в приложении runner — `ChildProcess` с таймаутом, в тестах — фейк.
+- 4.1: `CronOutputStore` — последние `cron/output/{job_id}/*.md`, свежие сверху.
+- 4.1: `PlansModel`, `PlansTab` (список, статус, следующий/последний запуск,
+  ошибки, «Обновить», «Создать», «На паузу/Возобновить», «Запустить сейчас»,
+  «Удалить» с подтверждением), `PlanJobRow`, `PlanOutputsSection`; вкладка
+  «Планы» подключена в `SettingsTabs`.
+- 4.1/4.3: `PlanTemplates` — 6 шаблонов (утренний брифинг, начало рабочего дня,
+  напоминание, недельный обзор, учёба, дайджест) и `PlanCreateSheet` с полями
+  название/расписание/часовой пояс/текст; создание идёт через
+  `hermes cron create --name ... --deliver local --timezone ...`.
+- Тесты: `CronJobsStoreTests` (парсинг, пустой/битый файл, микросекунды,
+  аргументы действий, ошибка CLI, сортировка и чтение результатов),
+  `MemoryLimitsTests`, `MemoryBlockFormatterTests`.
+
+Проверено:
+- `swift test` пакета — 362 теста (16 + 30 + 70 + 81 + 165), 0 ошибок.
+- `scripts/test.sh` — exit 0, SwiftFormat `0/251`, SwiftLint — только прежние
+  предупреждения (`SplashView`, `GeraSettings`), `gerania.app` собран.
+- Python-тесты голоса пропущены: в окружении нет `pytest`.
+- Живые `hermes cron` команды не запускались; сценарий с реальным планировщиком
+  пользователь проверяет сам.
+
+Осталось по этапу 4:
+- 4.2: FSEvents-наблюдатель за `cron/output`, уведомление и HUD-карточка «Готов
+  утренний брифинг» с кнопкой «Показать», отметки прочитанного в `UserDefaults`,
+  ошибки из `cron/executions.db` (read-only) и `hermes cron incidents`.
+- Живой сценарий: «напоминай каждый день в 8 утра» → задача в вкладке →
+  уведомление утром → «на паузу»/«запустить сейчас» из UI.

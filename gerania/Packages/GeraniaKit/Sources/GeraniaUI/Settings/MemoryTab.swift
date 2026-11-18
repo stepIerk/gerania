@@ -31,6 +31,8 @@ public struct MemoryTab: View {
                     column(.user)
                     column(.notes)
                 }
+                Divider()
+                MemoryPreviewView(model: model)
                 footer
             }
             .padding(16)
