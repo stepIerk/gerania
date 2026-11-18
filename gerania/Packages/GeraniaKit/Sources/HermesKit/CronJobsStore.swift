@@ -7,6 +7,7 @@ public enum CronError: Error, LocalizedError, Equatable {
     case invalidFormat(String)
     case commandFailed(exitCode: Int32, message: String)
     case binaryNotFound
+    case invalidRequest(String)
 
     public var errorDescription: String? {
         switch self {
@@ -16,10 +17,13 @@ public enum CronError: Error, LocalizedError, Equatable {
             "Файл задач повреждён: \(reason)"
         case let .commandFailed(exitCode, message):
             message.isEmpty
-                ? "Hermes завершился с кодом \(exitCode)."
-                : message
+                ? "Hermes не выполнил команду (код \(exitCode))."
+                : "Hermes не выполнил команду: \(message)"
         case .binaryNotFound:
-            "Не найден hermes. Укажите путь в настройках."
+            "Hermes недоступен: не найден исполняемый файл hermes. "
+                + "Установите Hermes или укажите путь на вкладке «Hermes»."
+        case let .invalidRequest(reason):
+            reason
         }
     }
 }
@@ -159,12 +163,17 @@ public actor CronJobsStore {
         _ = try await run(["cron", "remove", id])
     }
 
+    /// Starts the Hermes gateway if it is down: the cron ticker lives inside it.
+    ///
+    /// `gateway ensure` is idempotent and is the same call the chat transport
+    /// makes, so it never starts a second gateway.
+    public func ensureGateway(timeout: Int = 30) async throws {
+        _ = try await run(["gateway", "ensure", "--json", "--timeout", String(timeout)])
+    }
+
     public func create(_ request: CronJobRequest) async throws {
         guard request.isValid else {
-            throw CronError.commandFailed(
-                exitCode: -1,
-                message: "Заполните расписание и текст задачи."
-            )
+            throw CronError.invalidRequest("Заполните расписание и текст задачи.")
         }
         _ = try await run(request.arguments)
     }

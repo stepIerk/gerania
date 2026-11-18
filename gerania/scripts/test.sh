@@ -67,5 +67,11 @@ find "$APP_ROOT/tools" "$APP_ROOT/Resources" -name "*.pyc" -delete 2>/dev/null |
 find "$APP_ROOT/tools" "$APP_ROOT/Resources" -name "__pycache__" -type d -empty -delete 2>/dev/null || true
 find "$APP_ROOT/tools" "$APP_ROOT/Resources" -name ".pytest_cache" -type d -empty -delete 2>/dev/null || true
 
+if [[ "${GERANIA_CRON_SMOKE:-0}" == "1" ]]; then
+    # Живой Hermes на временном HERMES_HOME; по умолчанию выключено.
+    echo "== cron smoke =="
+    "$SCRIPT_DIR/cron_smoke.sh"
+fi
+
 echo "== app build =="
 "$SCRIPT_DIR/build.sh" Debug
