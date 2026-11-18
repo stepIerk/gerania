@@ -18,25 +18,43 @@ public final class PlansModel {
     public private(set) var isBusy = false
     public private(set) var errorMessage: String?
     public private(set) var statusMessage: String?
+    /// The Hermes cron ticker, from `cron/ticker_heartbeat`.
+    public private(set) var scheduler: CronSchedulerStatus = .notRunning
+    /// Whether banners about finished plans can appear.
+    public private(set) var notifications: NotificationAccess = .unknown
 
     /// Folder with `jobs.json` and `output/`; shown in the tab footer.
     public nonisolated let directory: URL
     private let store: CronJobsStore
+    /// Reads the notification permission; `nil` in the tests.
+    private let notificationAccess: (@Sendable () async -> NotificationAccess)?
+    /// Asks for the permission; `nil` in the tests.
+    private let notificationRequest: (@Sendable () async -> NotificationAccess)?
 
-    public init(store: CronJobsStore) {
+    public init(
+        store: CronJobsStore,
+        notificationAccess: (@Sendable () async -> NotificationAccess)? = nil,
+        notificationRequest: (@Sendable () async -> NotificationAccess)? = nil
+    ) {
         self.store = store
+        self.notificationAccess = notificationAccess
+        self.notificationRequest = notificationRequest
         directory = store.directory
     }
 
     public convenience init(settings: GeraSettings) {
-        self.init(store: CronJobsStore(config: HermesConfig(
-            hermesPath: settings.hermesPath,
-            provider: settings.provider,
-            model: settings.model,
-            workdir: settings.workdir,
-            voicePromptPrefix: "",
-            textPromptPrefix: ""
-        )))
+        self.init(
+            store: CronJobsStore(config: HermesConfig(
+                hermesPath: settings.hermesPath,
+                provider: settings.provider,
+                model: settings.model,
+                workdir: settings.workdir,
+                voicePromptPrefix: "",
+                textPromptPrefix: ""
+            )),
+            notificationAccess: { await CronNotifier.access() },
+            notificationRequest: { await CronNotifier.requestIfNeeded() }
+        )
     }
 
     public func load() async {
@@ -51,6 +69,39 @@ public final class PlansModel {
             errorMessage = message(for: error)
         }
         outputs = CronOutputStore.recent(in: directory)
+        await refreshDelivery()
+    }
+
+    /// Re-reads the scheduler heartbeat and the notification permission.
+    public func refreshDelivery() async {
+        scheduler = CronSchedulerStatus.read(cronDirectory: directory)
+        if let notificationAccess {
+            notifications = await notificationAccess()
+        }
+    }
+
+    /// Starts the Hermes gateway, which runs the cron ticker.
+    @discardableResult
+    public func startScheduler() async -> Bool {
+        let started = await perform("Планировщик Hermes запущен") {
+            try await self.store.ensureGateway()
+        }
+        guard started else { return false }
+        // The ticker stamps its heartbeat on the first loop, a moment after start.
+        try? await Task.sleep(for: .seconds(2))
+        await refreshDelivery()
+        if !scheduler.isRunning {
+            statusMessage = "Gateway запущен, ждём первый тик планировщика (до минуты)."
+        }
+        return true
+    }
+
+    public func requestNotifications() async {
+        guard let notificationRequest else { return }
+        notifications = await notificationRequest()
+        if notifications == .denied {
+            CronNotifier.openSystemSettings()
+        }
     }
 
     public func pause(_ job: CronJob) async -> Bool {
@@ -78,9 +129,14 @@ public final class PlansModel {
     }
 
     public func create(_ request: CronJobRequest) async -> Bool {
-        await perform("План создан") {
+        let created = await perform("План создан") {
             try await self.store.create(request)
         }
+        if created, !scheduler.isRunning {
+            statusMessage = "План создан, но планировщик Hermes не запущен: он не сработает, "
+                + "пока вы не нажмёте «Запустить планировщик»."
+        }
+        return created
     }
 
     public func dismissMessages() {
@@ -115,6 +171,7 @@ public final class PlansModel {
             errorMessage = message(for: error)
         }
         outputs = CronOutputStore.recent(in: directory)
+        scheduler = CronSchedulerStatus.read(cronDirectory: directory)
     }
 
     private func message(for error: Error) -> String {

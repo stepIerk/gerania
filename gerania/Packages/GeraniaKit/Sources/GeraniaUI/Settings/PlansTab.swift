@@ -25,6 +25,7 @@ public struct PlansTab: View {
 
     public var body: some View {
         Form {
+            PlanDeliverySection(model: model)
             Section("Планы Геры") {
                 header
                 if let status = model.statusMessage {
@@ -52,7 +53,10 @@ public struct PlansTab: View {
             }
             PlanOutputsSection(outputs: model.outputs, directory: model.directory)
             Section {
-                Text("Планы живут в Hermes: изменения из чата появляются здесь после «Обновить».")
+                Text(
+                    "Планы живут в Hermes: изменения из чата появляются здесь после «Обновить». "
+                        + "Готовый результат Гера покажет уведомлением и карточкой; клик открывает файл."
+                )
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                 Text("Файлы: \(abbreviatedDirectory)")

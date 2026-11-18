@@ -1078,3 +1078,50 @@ Swift (VoiceKit):
   ошибки из `cron/executions.db` (read-only) и `hermes cron incidents`.
 - Живой сценарий: «напоминай каждый день в 8 утра» → задача в вкладке →
   уведомление утром → «на паузу»/«запустить сейчас» из UI.
+
+## 2026-11-18 — этап 4.2: напоминания доходят до человека
+
+Что было сломано (диагностика на живом Hermes, только чтение):
+- Планы создаются с `--deliver local`. Для `local` Hermes только пишет
+  `cron/output/<id>/<время>.md` и никуда не отправляет. В Гере не было ни
+  наблюдателя, ни уведомления, ни HUD-карточки, поэтому напоминание срабатывало молча.
+- Состояние планировщика нигде не показывалось. Тикает gateway Hermes (тик 60 с,
+  `cron/ticker_heartbeat`); если gateway не поднят, план не срабатывает, а UI молчит.
+- Разрешение на уведомления спрашивали только для live-задач. Без делегата
+  `UNUserNotificationCenter` баннер не виден, когда Гера на переднем плане.
+
+Сделано:
+- HermesKit: `CronSchedulerStatus` (heartbeat → работает/остановлен/не запускался,
+  русские тексты), `CronOutputDigest` (имя и ответ из `# Cron Job:` / `## Response`,
+  метка `(FAILED)`), `CronResultTracker` (дедупликация: водяной знак + id, догоняет
+  пропущенное после перезапуска), `CronJob.lastFireError`/`isOverdue`,
+  `CronJobsStore.ensureGateway()`, понятные ошибки (`Hermes недоступен…`,
+  `Hermes не выполнил команду: …`, `invalidRequest`).
+- GeraniaUI: `CronMonitor` (опрос раз в 10 с, стартует в `GeraniaAppRoot`),
+  `CronNotifier` + `CronNotificationDelegate` (баннер и на переднем плане, клик
+  открывает файл), `AppModel+Cron` (баннеры: до 3 + сводка; HUD-карточка, если Гера
+  свободна). Разрешение на уведомления запрашивается по кнопке «Запустить Геранию»
+  (`startGera`), отказ ничего не ломает: карточка остаётся, а «Планы» объясняют, как
+  включить. Во вкладке «Планы» новая секция «Доставка напоминаний»: статус
+  планировщика с кнопкой «Запустить планировщик», статус уведомлений с кнопкой
+  «Разрешить» или «Открыть настройки». В строке задачи видны `last_fire_error` и
+  просрочка.
+- `scripts/cron_smoke.sh`: живой Hermes на временном `HERMES_HOME`, задача
+  `gerania-test-*` без LLM: create → pause → resume → run → tick → файл
+  результата → remove. В `test.sh` включается через `GERANIA_CRON_SMOKE=1`.
+- Тесты: `CronDeliveryTests` (heartbeat, разбор результата, дедупликация,
+  догон после перезапуска, `last_fire_error`, аргументы `gateway ensure`, ошибки),
+  `CronMonitorTests` (временная папка cron: один раз, перезапуск, HUD-карточка).
+
+Проверено:
+- Код писался в облачной среде без Swift и Xcode: **`swift build`/`swift test` и
+  `scripts/test.sh` здесь не запускались.** Нужен прогон на Mac, см. HUMAN_TODO §10.
+- Форматы Hermes сверены с исходниками установленного Hermes (`cron/jobs.py`,
+  `scheduler_delivery.py`, `hermes_cli/subcommands/cron.py`) и с живым `~/.hermes`:
+  heartbeat `<epoch> <pid>` обновляется каждые 60 с, gateway тикает профиль `default`.
+
+Осталось:
+- Прогон `scripts/test.sh` и живой сценарий из HUMAN_TODO §10.
+- `hermes cron incidents` и `executions.db` в UI не выводятся: хватает
+  `last_status`/`last_error`/`last_fire_error`.
+- Озвучивать напоминание голосом не стали: карточка и баннер не мешают текущему ответу.

@@ -63,8 +63,20 @@ struct PlanJobRow: View {
                     .foregroundStyle(.orange)
                     .lineLimit(2)
             }
+            if let held = job.lastFireError, !held.isEmpty {
+                warning("Hermes отложил запуск: \(held)")
+            } else if job.isOverdue() {
+                warning("Время запуска прошло, а Hermes его не выполнил: проверьте планировщик выше.")
+            }
         }
         .padding(.vertical, 3)
+    }
+
+    private func warning(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle")
+            .font(.system(size: 10.5))
+            .foregroundStyle(.orange)
+            .lineLimit(3)
     }
 
     private var badge: some View {

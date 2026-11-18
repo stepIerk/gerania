@@ -48,6 +48,10 @@ public final class AppModel {
         return await MicrophoneAccess.request()
     }
 
+    /// Asks for notifications when the person starts Gera. Set by the app
+    /// root; `nil` in the tests, which must not touch the notification center.
+    @ObservationIgnored var notificationRequest: (() async -> Void)?
+
     @ObservationIgnored public var currentMode: PromptMode = .text
     @ObservationIgnored var lastLevelLog = Date.distantPast
     @ObservationIgnored var levelSmoother = LevelSmoother()

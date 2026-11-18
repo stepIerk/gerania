@@ -21,6 +21,8 @@ public struct CronJob: Sendable, Equatable, Identifiable {
     public let lastRunAt: String?
     public let lastStatus: String?
     public let lastError: String?
+    /// Why the scheduler held a due run (`last_fire_error.detail`), e.g. no gateway.
+    public let lastFireError: String?
     public let deliver: String?
     public let timezone: String?
     public let repeatTimes: Int?
@@ -41,6 +43,7 @@ public struct CronJob: Sendable, Equatable, Identifiable {
         lastRunAt: String? = nil,
         lastStatus: String? = nil,
         lastError: String? = nil,
+        lastFireError: String? = nil,
         deliver: String? = nil,
         timezone: String? = nil,
         repeatTimes: Int? = nil,
@@ -60,6 +63,7 @@ public struct CronJob: Sendable, Equatable, Identifiable {
         self.lastRunAt = lastRunAt
         self.lastStatus = lastStatus
         self.lastError = lastError
+        self.lastFireError = lastFireError
         self.deliver = deliver
         self.timezone = timezone
         self.repeatTimes = repeatTimes
@@ -115,6 +119,15 @@ public struct CronJob: Sendable, Equatable, Identifiable {
         Self.date(lastRunAt)
     }
 
+    /// The due time passed long enough ago that a live ticker would have fired it.
+    ///
+    /// Hermes ticks every 60 s, so three minutes past `next_run_at` means the
+    /// scheduler is not running or holds the job (see `lastFireError`).
+    public func isOverdue(now: Date = Date(), tolerance: TimeInterval = 180) -> Bool {
+        guard !isPaused, !isCompleted, let next = nextRunDate else { return false }
+        return now.timeIntervalSince(next) > tolerance
+    }
+
     /// Parses a Hermes ISO-8601 timestamp, including Python's six-digit microseconds.
     public static func date(_ iso: String?) -> Date? {
         guard let iso, !iso.isEmpty else { return nil }
@@ -164,6 +177,8 @@ public struct CronJob: Sendable, Equatable, Identifiable {
             lastRunAt: raw["last_run_at"]?.stringValue,
             lastStatus: raw["last_status"]?.stringValue,
             lastError: raw["last_error"]?.stringValue,
+            lastFireError: raw["last_fire_error"]?["detail"]?.stringValue
+                ?? raw["last_fire_error"]?.stringValue,
             deliver: raw["deliver"]?.stringValue,
             timezone: raw["timezone"]?.stringValue,
             repeatTimes: repeatInfo?["times"]?.intValue,

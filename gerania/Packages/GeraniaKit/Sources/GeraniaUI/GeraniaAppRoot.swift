@@ -1,6 +1,8 @@
 import Foundation
 import GeraniaCore
+import HermesKit
 import KeyboardShortcuts
+@preconcurrency import UserNotifications
 
 /// Entry point the thin `@main` app target talks to.
 @MainActor
@@ -13,6 +15,8 @@ public final class GeraniaAppRoot {
     public let chats: ChatsModel
     /// The window of the application: the welcome screen and the settings.
     public let mainWindow: MainWindowController
+    /// Finished plans and the health of the Hermes scheduler.
+    public let cronMonitor: CronMonitor
 
     private init() {
         let settings = GeraSettings()
@@ -23,6 +27,7 @@ public final class GeraniaAppRoot {
         model = AppModel(settings: settings, hud: hud, chats: chats)
         panels = PanelCoordinator(settings: settings, hud: hud, chats: chats)
         mainWindow = MainWindowController(model: model, chats: chats)
+        cronMonitor = CronMonitor(directory: CronJobsStore.defaultDirectory())
         model.panels = panels
         chats.attach(service: model)
         panels.onSendPrompt = { [weak model] text, isNewChat in
@@ -53,6 +58,19 @@ public final class GeraniaAppRoot {
         }
         registerShortcuts()
         startChatsRefresh()
+        startCronMonitor()
+    }
+
+    /// Banners and HUD cards for plans that Hermes ran in the background.
+    private func startCronMonitor() {
+        UNUserNotificationCenter.current().delegate = CronNotificationDelegate.shared
+        model.notificationRequest = {
+            _ = await CronNotifier.requestIfNeeded()
+        }
+        cronMonitor.onResults = { [weak model] results in
+            model?.announceCronResults(results)
+        }
+        cronMonitor.start()
     }
 
     /// Keeps the list of chats fresh for the menu bar.

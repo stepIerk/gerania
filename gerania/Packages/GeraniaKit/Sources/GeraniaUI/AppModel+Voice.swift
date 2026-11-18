@@ -59,6 +59,9 @@ public extension AppModel {
     func startGera() async {
         settings.voiceEnabled = true
         await startVoice()
+        // Onboarding step: reminders need banners. A refusal only changes the
+        // status line in «Планы»; the HUD card still shows the result.
+        await notificationRequest?()
         if isVoiceRunning {
             setLaunchError(nil)
             return
