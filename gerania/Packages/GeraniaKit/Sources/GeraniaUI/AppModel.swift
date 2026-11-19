@@ -80,6 +80,8 @@ public final class AppModel {
     @ObservationIgnored var livePendingText: String?
     @ObservationIgnored var liveSentText: String?
     @ObservationIgnored var liveStartup = LiveStartup()
+    @ObservationIgnored var liveQuota = LiveQuotaGuard()
+    @ObservationIgnored var liveActiveModel: String?
     @ObservationIgnored var voiceIsSuspended = false
     @ObservationIgnored var voiceSuspendContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored var liveNoteQueue: [String] = []

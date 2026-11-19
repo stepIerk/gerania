@@ -163,7 +163,17 @@ public struct SettingsTabs: View {
                     "Ключ",
                     value: LiveCredentials.isConfigured ? "задан" : "не задан"
                 )
-                TextField("Модель", text: $settings.liveModel, prompt: Text("gemini-3.8-live"))
+                Picker("Модель", selection: $settings.liveModel) {
+                    ForEach(LiveModelCatalog.entries) { entry in
+                        Text(entry.title).tag(entry.id)
+                    }
+                    if !LiveModelCatalog.entries.contains(where: { $0.id == settings.liveModel }) {
+                        Text(settings.liveModel).tag(settings.liveModel)
+                    }
+                }
+                Text(liveModelNote)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
                 TextField("Голос", text: $settings.liveVoiceName, prompt: Text("Kore"))
                 HStack {
                     Text("Закрывать после тишины")
@@ -179,6 +189,11 @@ public struct SettingsTabs: View {
             }
             .padding(.vertical, 4)
         }
+    }
+
+    private var liveModelNote: String {
+        let note = LiveModelCatalog.entries.first { $0.id == settings.liveModel }?.note ?? "Своя модель"
+        return "\(note). Если у модели кончится лимит, Гера сама перейдёт на следующую из списка."
     }
 
     private func saveLiveKey() {
@@ -236,13 +251,6 @@ public struct SettingsTabs: View {
     }
 
     private var diagnostics: some View {
-        Form {
-            LabeledContent("GeraniaKit", value: HermesKitInfo.version)
-            LabeledContent("VoiceKit", value: VoiceKitInfo.version)
-            LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "com.yourname.Gerania")
-            Text("Проверка транспортов и логов появится на следующем этапе.")
-                .foregroundStyle(.secondary)
-        }
-        .formStyle(.grouped)
+        DiagnosticsTab(settings: settings)
     }
 }

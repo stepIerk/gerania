@@ -14,11 +14,13 @@ extension AppModel {
             return
         }
         let key: String
+        let model: String
         do {
             key = try LiveCredentials.loadAPIKey()
+            model = try availableLiveModel()
         } catch {
-            Log.voice.error("live: credentials unavailable: \(error.localizedDescription, privacy: .public)")
-            hud.hint = "\(error.localizedDescription) — обычный режим"
+            Log.voice.error("live: unavailable: \(error.localizedDescription, privacy: .public)")
+            hud.hint = liveFailureHint(error)
             // The ears still own the microphone: the classic pipeline finishes the
             // phrase, so the seed must not be sent a second time.
             if !waitForPhrase || voiceBridge == nil || !isVoiceRunning {
@@ -30,7 +32,7 @@ extension AppModel {
         hud.heardText = nil
         hud.isLive = true
         hud.showsModel = settings.showActiveModelInHUD
-        hud.modelLabel = settings.liveModel
+        hud.modelLabel = model
         hud.hint = "Подключаюсь к Gemini…"
         apply(state: .listening(deadline: Date().timeIntervalSince1970 + 3600))
         panels?.presentHUD(state: state)
@@ -40,7 +42,7 @@ extension AppModel {
         liveStartup.begin(skipWait: !waitForPhrase || !earsRunning)
         Log.voice.notice("live: start requested")
         liveStartTask = Task { [weak self] in
-            await self?.runLiveStart(seed: seed, key: key)
+            await self?.runLiveStart(seed: seed, key: key, model: model)
         }
     }
 
@@ -89,11 +91,12 @@ extension AppModel {
         Log.voice.notice("live: dialog finished")
     }
 
-    private func runLiveStart(seed: String?, key: String) async {
+    func runLiveStart(seed: String?, key: String, model: String) async {
         defer { liveStartTask = nil }
+        liveActiveModel = model
         let session = LiveSessionConfiguration(
             apiKey: key,
-            model: settings.liveModel,
+            model: model,
             voiceName: settings.liveVoiceName,
             tools: LiveTools.all
         )
@@ -149,6 +152,7 @@ extension AppModel {
             isLiveActive = true
             try await flushLiveText(seed: seed, into: conversation)
             hud.hint = nil
+            liveQuota.markWorking(model)
             Log.voice.notice("live: ready")
         } catch {
             Log.voice.error("live: start failed: \(error.localizedDescription, privacy: .public)")
@@ -160,9 +164,12 @@ extension AppModel {
             guard !cancelled else {
                 return
             }
+            if await retryLiveAfterQuota(error, seed: seed, key: key, model: model) {
+                return
+            }
             isLiveActive = false
             hud.isLive = false
-            hud.hint = "\(error.localizedDescription) — обычный режим"
+            hud.hint = liveFailureHint(error)
             await fallbackFromLive(seed: seed)
         }
     }
