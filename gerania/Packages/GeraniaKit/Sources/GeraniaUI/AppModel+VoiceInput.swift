@@ -2,7 +2,7 @@ import Foundation
 import GeraniaCore
 import VoiceKit
 
-/// Microphone input: hotkeys, listen modes, the owner voice and the live gate.
+/// Microphone input: hotkeys, listen modes, noise rejection and the live gate.
 ///
 /// ⌃⌥G talks (tap — Gera listens to one phrase, hold — while held),
 /// ⌃⌥⇧G stops the answer, ⌃⌥⌘G turns the microphone off and on.
@@ -91,22 +91,19 @@ public extension AppModel {
 
     // MARK: - Ears
 
-    /// The Picovoice key and files for the ears process.
+    /// Environment of the ears process: the custom wake model, if any.
     internal func earsEnvironment() -> [String: String] {
-        WakeEngine.environment(
-            sensitivity: voiceInput.settings.keywordSensitivity,
-            ownerThreshold: voiceInput.settings.ownerThreshold
-        )
+        voiceInput.settings.earsEnvironment
     }
 
-    /// Listen mode and owner gate take effect at once, without a restart.
+    /// Listen mode and noise rejection take effect at once, without a restart.
     func sendVoiceInputSettings() async {
         await voiceBridge?.send(.listenMode(voiceInput.settings.listenMode.rawValue))
-        await voiceBridge?.send(.ownerGate(enabled: voiceInput.settings.ownerGateEnabled))
+        await voiceBridge?.send(.config(values: voiceInput.settings.noiseRejection.earsConfig))
         updateLiveInputGate()
     }
 
-    /// A new key, file, sensitivity or threshold needs a fresh ears process.
+    /// A new wake model needs a fresh ears process.
     func restartEars() async {
         guard voiceBridge != nil else { return }
         await voiceBridge?.stop()
@@ -116,48 +113,24 @@ public extension AppModel {
     }
 
     internal func handleVoiceInputEvent(_ event: VoiceEvent) {
-        switch event {
-        case let .engines(keyword, keywordDetail, owner, ownerDetail):
-            voiceInput.noteEngines(
-                keyword: keyword,
-                keywordDetail: keywordDetail,
-                owner: owner,
-                ownerDetail: ownerDetail
-            )
-            Log.voice.notice(
-                "ears: keyword \(keywordDetail, privacy: .public), owner \(ownerDetail, privacy: .public)"
-            )
-        case let .wakeRejected(score):
-            Log.voice.info("wake word rejected: foreign voice \(score, privacy: .public)")
-        case let .speakerRejected(score):
-            Log.voice.info("phrase rejected: foreign voice \(score, privacy: .public)")
-            if case .listening = state {
-                hud.hint = "Не узнала голос — команда не принята"
-            }
-        case let .speaker(who):
-            voiceInput.liveOtherSpeaking = who == .other
-            updateLiveInputGate()
-        default:
-            break
-        }
+        guard case let .engines(wake, keyword, speech, speechDetail) = event else { return }
+        voiceInput.noteEngines(wake: wake, keyword: keyword, speech: speech, speechDetail: speechDetail)
+        Log.voice.notice("ears: wake \(wake, privacy: .public), speech \(speechDetail, privacy: .public)")
     }
 
     // MARK: - Live gate
 
-    /// Opens or closes the microphone of the live dialog by the listen mode,
-    /// the hotkey and who is talking.
+    /// Opens or closes the microphone of the live dialog by the listen mode and the hotkey.
     internal func updateLiveInputGate() {
         guard let conversation = liveConversation else {
             voiceInput.liveTalkLatched = false
-            voiceInput.liveOtherSpeaking = false
             return
         }
         let open = LiveInputPolicy.isOpen(
             mode: voiceInput.settings.listenMode,
             modelSpeaking: liveSpeaking,
             talkHeld: voiceInput.talkPressedAt != nil,
-            talkLatched: voiceInput.liveTalkLatched,
-            otherSpeaking: voiceInput.ownerGateActive && voiceInput.liveOtherSpeaking
+            talkLatched: voiceInput.liveTalkLatched
         )
         conversation.setInputGate(open: open)
         hud.isLiveMicClosed = !open

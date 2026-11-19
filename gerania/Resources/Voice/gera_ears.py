@@ -30,6 +30,7 @@ import mlx_whisper
 
 # The helper module lives next to this script (also inside the app bundle).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gera_vad  # noqa: E402
 import gera_wake  # noqa: E402
 
 # ============================== НАСТРОЙКИ ==============================
@@ -69,10 +70,24 @@ WAKE_STRICT_RE = re.compile(
 WAKE_LOOSE_RE = re.compile(
     WAKE_CORE_CYR + "|" + WAKE_CORE_CYR_O, re.IGNORECASE
 )
+# The clean form «Гера/Гёра/Гэра»: other forms («Гира», «Гиро», «Gera») are
+# allowed, but Whisper must be surer of them (see `wake_confident`).
+WAKE_SURE_RE = re.compile(r"(?<![А-Яа-яЁёA-Za-z])г\s*[еёэ]\s*р\s*а(?![А-Яа-яЁё])", re.IGNORECASE)
 WAKE_MAX_PREFIX_WORDS = 2      # перед "Гера" допускается не больше 2 слов ("ну", "слушай")
 AWAIT_COMMAND_SEC = 8.0
-# After Porcupine hears «Гера», Whisper may read the phrase for this long.
+# After a wake-word plugin hears «Гера», Whisper may read the phrase for this long.
 KEYWORD_WINDOW_SEC = 4.0
+# Whisper's own confidence in the word «Гера» (word timestamps). Hallucinations
+# on noise come with a low probability; a loose form («Гиро») needs more.
+WAKE_MIN_PROB = 0.45
+WAKE_LOOSE_EXTRA_PROB = 0.2
+# Frame-level speech probability (Silero VAD or the spectral detector): noise
+# below it neither starts a phrase nor keeps it going.
+SPEECH_PROB_MIN = {"silero": 0.5, "spectral": 0.6}
+# A wake word heard on the fly needs this share of speech frames in the phrase.
+PARTIAL_WAKE_SPEECH_RATIO = 0.35
+# Phrases with less speech than this are noise, whatever Whisper heard.
+MIN_SPEECH_RATIO = 0.2
 MIN_COMMAND_CHARS = 3
 
 # --- быстрый wake ---
@@ -148,7 +163,6 @@ class IPC:
         self.suspended = False
         self.should_exit = False
         self.listen_mode = gera_wake.LISTEN_ALWAYS
-        self.owner_gate = True
 
     # --- исходящие события ---
     def emit(self, kind: str, **fields) -> None:
@@ -209,8 +223,6 @@ class IPC:
             mode = command.get("mode")
             if mode in gera_wake.LISTEN_MODES:
                 self.listen_mode = mode
-        elif kind == "owner_gate":
-            self.owner_gate = bool(command.get("enabled"))
         elif kind == "flush":
             State.flush = True
         elif kind == "shutdown":
@@ -246,6 +258,7 @@ def apply_config(command: dict) -> None:
     global NO_SPEECH_MAX, LOGPROB_MIN, MIN_RMS, NOISE_MULT, AWAIT_COMMAND_SEC
     global BAND_RATIO_MIN, FLATNESS_MAX, MIN_TONAL_FRAMES, MIN_TONAL_FRAC
     global PARTIAL_INTERVAL, PARTIAL_MIN_SEC, PARTIAL_MAX_SEC, COMMAND_PAUSE_SEC
+    global WAKE_MIN_PROB, PARTIAL_WAKE_SPEECH_RATIO, MIN_SPEECH_RATIO
     values = command.get("values") or {}
     for key, value in values.items():
         try:
@@ -278,13 +291,23 @@ def apply_config(command: dict) -> None:
             PARTIAL_MAX_SEC = number
         elif key == "command_pause_sec":
             COMMAND_PAUSE_SEC = number
+        elif key == "wake_min_prob":
+            WAKE_MIN_PROB = number
+        elif key == "speech_prob_silero":
+            SPEECH_PROB_MIN["silero"] = number
+        elif key == "speech_prob_spectral":
+            SPEECH_PROB_MIN["spectral"] = number
+        elif key == "partial_wake_speech_ratio":
+            PARTIAL_WAKE_SPEECH_RATIO = number
+        elif key == "min_speech_ratio":
+            MIN_SPEECH_RATIO = number
 
 
 # ============================== СОСТОЯНИЕ ==============================
 class State:
     awaiting = False
     await_deadline = 0.0
-    keyword_at = 0.0     # when Porcupine heard «Гера»
+    keyword_at = 0.0     # when the wake-word plugin heard «Гера»
     flush = False        # hold-to-talk released: send the command now
 
 
@@ -319,10 +342,29 @@ def speech_check(audio: np.ndarray):
 
 # ================================ VAD ================================
 class VAD:
-    def __init__(self):
+    """Phrase boundaries: loud enough AND speech-like frames.
+
+    `speech` is a frame detector from gera_vad (Silero or spectral). Without it
+    only the loudness counts (the old behaviour, kept for tests and `--levels`).
+    A loud frame that is not speech — a fan, typing, music — does not start a
+    phrase, does not keep it going and slowly raises the noise floor.
+    """
+
+    def __init__(self, speech=None):
         self.noise = 0.003
+        self.speech = speech
+        self.last_prob = 1.0
         self.pre = deque(maxlen=PRE_ROLL_FRAMES)
         self.reset()
+
+    def speech_threshold(self) -> float:
+        if self.speech is None:
+            return 0.0
+        return SPEECH_PROB_MIN.get(getattr(self.speech, "name", ""), 0.5)
+
+    def speech_ratio(self) -> float:
+        """Share of speech frames in the current phrase."""
+        return self.voiced / len(self.buf) if self.buf else 0.0
 
     def reset(self):
         """Полный сброс (например, после нашего собственного звука)."""
@@ -374,15 +416,26 @@ class VAD:
     def feed(self, frame: np.ndarray, mult: float = 1.0):
         rms = float(np.sqrt(np.mean(frame * frame)))
         thr = max(MIN_RMS, self.noise * NOISE_MULT) * mult
-        loud = rms > thr
+        loud_only = rms > thr
+        if self.speech is not None and loud_only:
+            self.last_prob = float(self.speech.prob(frame))
+            loud = self.last_prob >= self.speech_threshold()
+        else:
+            if self.speech is not None:
+                self.speech.prob(frame)     # keep the detector's context going
+                self.last_prob = 0.0
+            loud = loud_only
         if DEBUG and int(time.time() * 4) % 4 == 0:
             # Только stderr: stdout — NDJSON, любая строка ломает событие.
             print(f"\rrms={rms:.4f} thr={thr:.4f} active={self.active}   ",
                   file=sys.stderr, end="")
 
         if not self.active:
-            if not loud:
+            if not loud_only:
                 self.noise = 0.95 * self.noise + 0.05 * rms
+            elif not loud:
+                # Loud but not speech (fan, music, typing): lift the floor slowly.
+                self.noise = 0.99 * self.noise + 0.01 * rms
             self.pre.append(frame)
             self.speech_run = self.speech_run + 1 if loud else 0
             if self.speech_run >= START_FRAMES:
@@ -402,10 +455,15 @@ class VAD:
         if self.silence_run >= END_SILENCE_FRAMES or len(self.buf) >= MAX_UTT_FRAMES:
             audio = np.concatenate(self.buf)
             voiced = self.voiced
+            tail = self.silence_run
             duration = time.time() - self.started_at
             self.reset()
             if voiced < MIN_VOICED_FRAMES:
                 return ("filtered", "короткий звук", duration)
+            # The trailing pause is not part of the phrase.
+            frames = max(1, len(audio) // FRAME - tail)
+            if self.speech is not None and voiced / frames < MIN_SPEECH_RATIO:
+                return ("filtered", f"мало речи ({voiced}/{frames} кадров)", duration)
             if USE_SPECTRAL_GATE:
                 ok, info = speech_check(audio)
                 if not ok:
@@ -415,8 +473,28 @@ class VAD:
 
 
 # ============================ РАСПОЗНАВАНИЕ ============================
+class Transcript(str):
+    """Recognised text that also carries Whisper's per-word probabilities.
+
+    A plain `str` everywhere (find_wake, logs, IPC), plus `.words` —
+    `[(word, probability), ...]` or `None` when word timestamps are unavailable.
+    """
+
+    words = None
+
+    def __new__(cls, text: str, words=None):
+        value = super().__new__(cls, text)
+        value.words = words
+        return value
+
+
+# Word timestamps need alignment heads; a model without them disables the
+# per-word check instead of breaking recognition.
+WORD_TIMESTAMPS = {"enabled": True}
+
+
 def transcribe(audio: np.ndarray, prompt=None, model: str = MODEL_NAME):
-    """Возвращает (текст, no_speech_prob, avg_logprob)."""
+    """Возвращает (текст, no_speech_prob, avg_logprob); текст — `Transcript` со словами."""
     kw = dict(
         path_or_hf_repo=model,
         language=LANGUAGE,
@@ -427,15 +505,44 @@ def transcribe(audio: np.ndarray, prompt=None, model: str = MODEL_NAME):
     )
     if prompt:
         kw["initial_prompt"] = prompt
-    try:
-        res = mlx_whisper.transcribe(audio.astype(np.float32), **kw)
-    except Exception as e:
-        print(f"Ошибка распознавания: {e}", file=sys.stderr)
-        return "", 1.0, -9.0
+    res = None
+    if WORD_TIMESTAMPS["enabled"]:
+        try:
+            res = mlx_whisper.transcribe(audio.astype(np.float32), word_timestamps=True, **kw)
+        except Exception as e:  # noqa: BLE001
+            WORD_TIMESTAMPS["enabled"] = False
+            print(f"Словные метки недоступны ({e}) — проверка уверенности в «Гера» выключена",
+                  file=sys.stderr, flush=True)
+    if res is None:
+        try:
+            res = mlx_whisper.transcribe(audio.astype(np.float32), **kw)
+        except Exception as e:
+            print(f"Ошибка распознавания: {e}", file=sys.stderr)
+            return "", 1.0, -9.0
     segs = res.get("segments") or []
     nsp = max((s.get("no_speech_prob", 0.0) for s in segs), default=0.0)
     lp = min((s.get("avg_logprob", 0.0) for s in segs), default=0.0)
-    return (res.get("text") or "").strip(), float(nsp), float(lp)
+    words = [(str(w.get("word", "")), float(w.get("probability", 0.0)))
+             for seg in segs for w in (seg.get("words") or [])] or None
+    return Transcript((res.get("text") or "").strip(), words), float(nsp), float(lp)
+
+
+def wake_confident(text) -> bool:
+    """Whisper is sure enough that the wake word was really said.
+
+    Uses the probability of the first word with the wake word: the clean form
+    «Гера» needs `WAKE_MIN_PROB`, other forms («Гира», «Гиро», «Gera») more. Without word data
+    (plain text, a model without alignment heads) there is nothing to check.
+    """
+    words = getattr(text, "words", None)
+    if not words:
+        return True
+    for word, probability in words[: WAKE_MAX_PREFIX_WORDS + 2]:
+        if WAKE_SURE_RE.search(word):
+            return probability >= WAKE_MIN_PROB
+        if WAKE_STRICT_RE.search(word) or WAKE_LOOSE_RE.search(word):
+            return probability >= min(0.95, WAKE_MIN_PROB + WAKE_LOOSE_EXTRA_PROB)
+    return True
 
 
 def probe_model(model: str) -> None:
@@ -571,6 +678,9 @@ class WakeTracker:
     def observe(self, text: str) -> bool:
         """Обновляет состояние по новой гипотезе. True — wake-слово найдено."""
         match = find_wake(text)
+        if match and not self.woke and not wake_confident(text):
+            # «Гера» is in the text, but Whisper is not sure it was said: noise.
+            match = None
         if match:
             self.woke = True
             command = clean_command(text[match.end():])
@@ -621,45 +731,9 @@ def levels_mode():
             time.sleep(1)
 
 
-def enroll_mode(out_path: str) -> int:
-    """Records the owner voice profile: `--enroll-voice PATH --ipc`."""
-    ipc = IPC()
-    if IPC_MODE:
-        ipc.start_reader()
-    frames: "queue.Queue[np.ndarray]" = queue.Queue()
-
-    def callback(indata, count, t, status):  # noqa: ARG001
-        frames.put(indata[:, 0].copy())
-
-    def read_frame():
-        if ipc.should_exit:
-            return None
-        try:
-            return frames.get(timeout=5.0)
-        except queue.Empty:
-            return None
-
-    try:
-        with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
-                            blocksize=FRAME, callback=callback):
-            ipc.emit("enroll_started")
-            ok = gera_wake.enroll_owner(out_path, read_frame, ipc.emit)
-    except Exception as error:  # noqa: BLE001
-        ipc.emit("error", message=f"микрофон: {error}")
-        ok = False
-    ipc.emit("bye")
-    return 0 if ok else 1
-
-
 def main():
     if LEVELS_MODE:
         return levels_mode()
-    if "--enroll-voice" in sys.argv:
-        index = sys.argv.index("--enroll-voice")
-        if index + 1 >= len(sys.argv):
-            print("--enroll-voice требует путь к файлу профиля", file=sys.stderr, flush=True)
-            return 2
-        return enroll_mode(sys.argv[index + 1])
 
     ipc = IPC()
     if IPC_MODE:
@@ -668,38 +742,25 @@ def main():
     print("=== GERANIA ears ===", file=sys.stderr, flush=True)
     print(f"🎙️  Загрузка {MODEL_NAME} ...", file=sys.stderr, flush=True)
     transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32))
-    detector, wake_detail = gera_wake.KeywordDetector.create()
-    verifier, owner_detail = gera_wake.OwnerVerifier.create()
-    print(f"🔔 wake: {wake_detail}; 🧑 голос владельца: {owner_detail}", file=sys.stderr, flush=True)
+    detector, wake_detail = gera_wake.load_wake_plugin(os.environ)
+    speech, speech_detail = gera_vad.create_speech_detector(os.environ)
+    print(f"🔔 wake: {wake_detail}; 🗣 речь: {speech_detail}", file=sys.stderr, flush=True)
     ipc.emit("ready", model=MODEL_NAME)
-    ipc.emit("engines", keyword=detector is not None, keyword_detail=wake_detail,
-             owner=verifier is not None, owner_detail=owner_detail)
+    ipc.emit("engines", wake=wake_detail, keyword=detector is not None,
+             speech=speech.name, speech_detail=speech_detail)
 
     def keyword_recent() -> bool:
-        """Porcupine heard «Гера» a moment ago: Whisper may read this phrase."""
+        """The wake-word plugin heard «Гера» a moment ago: Whisper may read this phrase."""
         return time.time() - State.keyword_at < KEYWORD_WINDOW_SEC
 
     def whisper_needed() -> bool:
-        """With Porcupine, Whisper runs only after the wake word or for stop words."""
+        """With a wake-word plugin, Whisper runs only after the wake word or for stop words."""
         return (detector is None or State.awaiting or keyword_recent()
                 or ipc.busy or ipc.speaking)
 
-    def owner_gate_active() -> bool:
-        return ipc.owner_gate and verifier is not None
-
-    def owner_ok() -> bool:
-        """The phrase was said by the owner (always true without the gate)."""
-        if not owner_gate_active():
-            return True
-        return max(utt_owner_best, verifier.score()) >= verifier.gate.threshold
-
     def on_keyword() -> None:
-        """Porcupine heard «Гера»."""
-        if not gera_wake.wake_allowed(ipc.listen_mode, ipc.speaking, owner_gate_active()):
-            return
-        if owner_gate_active() and not verifier.is_owner():
-            ipc.emit("wake_rejected", reason="чужой голос", score=round(verifier.score(), 2))
-            print(f"🙅 «Гера» чужим голосом: {verifier.score():.2f}", file=sys.stderr, flush=True)
+        """The wake-word plugin heard «Гера»."""
+        if not gera_wake.wake_allowed(ipc.listen_mode, ipc.speaking):
             return
         now = time.time()
         if now - State.keyword_at < 1.0:
@@ -709,7 +770,7 @@ def main():
         State.await_deadline = now + AWAIT_COMMAND_SEC
         tracker.wake_sent = True
         ipc.emit("wake", inline_command=None, via="keyword")
-        print("🔔 проснулись: Porcupine", file=sys.stderr, flush=True)
+        print("🔔 проснулись: своя модель", file=sys.stderr, flush=True)
     print("✅ Готово.", file=sys.stderr, flush=True)
 
     def dispatch(cmd: str, via: str):
@@ -723,10 +784,6 @@ def main():
         """Отправляет команду, если она ещё не уходила (частичный ответ не дублируем)."""
         if tracker.stop_sent:
             return              # быстрый стоп уже отправлен
-        if not owner_ok():
-            ipc.emit("speaker_rejected", score=round(verifier.score(), 2))
-            print("🙅 команда чужим голосом — пропускаю", file=sys.stderr, flush=True)
-            return
         cmd = clean_command(cmd)
         if not is_real_command(cmd):
             return
@@ -782,6 +839,10 @@ def main():
         print(f"👂 {text}", file=sys.stderr, flush=True)
 
         m = find_wake(text)
+        if m and not waiting and not tracker.woke and not wake_confident(text):
+            print(f"🚫 «Гера» неуверенно (шум?): {text!r}", file=sys.stderr, flush=True)
+            ipc.emit("filtered", reason="не уверена, что звали Геру")
+            m = None
         stop = is_stop(text)
 
         # --- Гера слушает команду ---
@@ -801,7 +862,7 @@ def main():
         # --- стоп-слова вне режима ввода ---
         # `tracker.woke` — призыв был в этой же реплике, просто финальная
         # расшифровка потеряла «Гера»: «Гера, стоп» остаётся явным стопом.
-        if stop and owner_ok() and (m or tracker.woke or (STOP_WHEN_BUSY and (ipc.busy or ipc.speaking))):
+        if stop and (m or tracker.woke or (STOP_WHEN_BUSY and (ipc.busy or ipc.speaking))):
             scope = "explicit" if (m or tracker.woke) else "busy"
             ipc.emit("stop", scope=scope)
             return
@@ -810,7 +871,7 @@ def main():
         if ipc.speaking:
             return
 
-        # С Porcupine wake-слово ловит он, а не Whisper по тексту.
+        # Со своей wake-моделью «Гера» ловит она, а не Whisper по тексту.
         if detector is not None and not keyword_recent():
             return
 
@@ -841,13 +902,16 @@ def main():
             tracker.covered = covered
         if not tracker.woke and not tracker.stop_sent and (ipc.busy or ipc.speaking):
             # Быстрый стоп: короткое «стоп» во время работы не ждём конца фразы.
-            if is_stop(text) and owner_ok():
+            if is_stop(text):
                 tracker.stop_sent = True
                 ipc.emit("stop", scope="busy")
                 print(f"🛑 быстрый стоп: {text!r}", file=sys.stderr, flush=True)
                 return
         if detector is not None and not (State.awaiting or keyword_recent()):
-            return      # Porcupine owns the wake word: Whisper only checks stop words here
+            return      # the plugin owns the wake word: Whisper only checks stop words here
+        if (covered and not tracker.woke and not State.awaiting
+                and vad.speech is not None and vad.speech_ratio() < PARTIAL_WAKE_SPEECH_RATIO):
+            return      # on the fly: too little speech in the phrase for a wake word
         if tracker.observe(text):
             if not tracker.wake_sent and not keyword_recent():
                 tracker.wake_sent = True
@@ -962,11 +1026,9 @@ def main():
             except queue.Empty:
                 return
 
-    vad = VAD()
+    vad = VAD(speech=speech)
     last_level_at = 0.0
     stream = None
-    utt_owner_best = 0.0
-    speakers = gera_wake.SpeakerTracker()
     try:
         stream = open_stream()
         while True:
@@ -975,38 +1037,21 @@ def main():
 
             # Приложение забирает микрофон на время live-сессии Gemini.
             if ipc.suspended:
-                # With the owner gate the microphone stays open (macOS lets two
-                # clients record): the ears tell the live dialog who is talking.
-                monitor = owner_gate_active()
-                if stream is not None and not monitor:
-                    close_stream(stream)
-                    stream = None
-                ipc.emit("suspended", monitoring=monitor)
-                State.awaiting = False
-                vad.reset()
-                tracker.reset()
-                clear_queue()
-                pause_handled = False
-                speakers.reset()
-                while not ipc.should_exit and ipc.suspended:
-                    if os.getppid() == 1:
-                        break
-                    if not monitor:
-                        time.sleep(0.05)
-                        continue
-                    try:
-                        frame = q.get(timeout=0.1)
-                    except queue.Empty:
-                        continue
-                    verifier.feed(frame)
-                    rms = float(np.sqrt(np.mean(frame * frame)))
-                    voiced = rms > max(MIN_RMS, vad.noise * NOISE_MULT)
-                    change = speakers.update(voiced, verifier.is_owner(), time.time())
-                    if change:
-                        ipc.emit("speaker", who=change, score=round(verifier.score(), 2))
                 if stream is not None:
                     close_stream(stream)
                     stream = None
+                ipc.emit("suspended")
+                State.awaiting = False
+                vad.reset()
+                if vad.speech is not None:
+                    vad.speech.reset()
+                tracker.reset()
+                clear_queue()
+                pause_handled = False
+                while not ipc.should_exit and ipc.suspended:
+                    if os.getppid() == 1:
+                        break
+                    time.sleep(0.05)
                 if ipc.should_exit or os.getppid() == 1:
                     break
                 clear_queue()
@@ -1046,8 +1091,6 @@ def main():
                 if detector is not None:
                     detector.reset()
                 continue
-            if verifier is not None:
-                verifier.feed(frame)
             if detector is not None and detector.feed(frame):
                 on_keyword()
 
@@ -1059,10 +1102,7 @@ def main():
                 tracker.reset()
                 if keyword_recent():
                     tracker.wake_sent = True
-                utt_owner_best = 0.0
                 ipc.emit("utterance_start")
-            if vad.active and verifier is not None:
-                utt_owner_best = max(utt_owner_best, verifier.score())
             if State.flush:
                 # Hold-to-talk released: the phrase is over, send it now.
                 State.flush = False

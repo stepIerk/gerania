@@ -44,6 +44,21 @@ for model in ("mlx-community/whisper-large-v3-turbo", "mlx-community/whisper-bas
 PYMODELS
 fi
 
+# Silero VAD: нейросеть «речь или шум» (MIT, ~2 МБ). Без неё «уши» работают на
+# спектральном детекторе, но хуже отличают речь от музыки и телевизора.
+MODELS_DIR="$HOME/Library/Application Support/Gerania/models"
+SILERO_URL="https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+mkdir -p "$MODELS_DIR"
+if [[ ! -s "$MODELS_DIR/silero_vad.onnx" ]]; then
+    echo "Качаем Silero VAD..."
+    if curl -fsSL "$SILERO_URL" -o "$MODELS_DIR/silero_vad.onnx.part"; then
+        mv "$MODELS_DIR/silero_vad.onnx.part" "$MODELS_DIR/silero_vad.onnx"
+    else
+        rm -f "$MODELS_DIR/silero_vad.onnx.part"
+        echo "Не удалось скачать Silero VAD — Гера будет на спектральном детекторе."
+    fi
+fi
+
 # Приложение читает путь к python из своих настроек — записываем его туда,
 # чтобы Геря сразу нашла окружение с numpy и mlx-whisper.
 if command -v defaults >/dev/null 2>&1; then
@@ -52,4 +67,4 @@ if command -v defaults >/dev/null 2>&1; then
 fi
 
 echo "Готово. Python для настроек Геры: $VENV/bin/python"
-echo "Проверка: \"$VENV/bin/python\" -c 'import numpy, mlx_whisper, sounddevice; print(\"ok\")'"
+echo "Проверка: \"$VENV/bin/python\" -c 'import numpy, mlx_whisper, sounddevice, onnxruntime; print(\"ok\")'"

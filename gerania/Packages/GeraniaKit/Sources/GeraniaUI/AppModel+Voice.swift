@@ -147,7 +147,7 @@ public extension AppModel {
             hud.hint = message
         case .bye:
             Log.voice.info("voice script finished")
-        case .engines, .wakeRejected, .speakerRejected, .speaker, .enrollProgress, .enrollDone:
+        case .engines:
             handleVoiceInputEvent(event)
         }
     }

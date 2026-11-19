@@ -14,7 +14,7 @@ public actor VoiceBridge {
         public var scriptOverridePath: String
         /// Home directory of the user.
         public var homeDirectory: String
-        /// Extra environment: the Picovoice key and the wake files (`WakeEngine`).
+        /// Extra environment for the ears, e.g. `GERA_WAKE_PLUGIN` (a custom wake model).
         public var environment: [String: String]
 
         public init(

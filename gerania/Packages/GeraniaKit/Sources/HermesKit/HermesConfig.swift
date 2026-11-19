@@ -44,12 +44,11 @@ public struct HermesConfig: Sendable, Equatable {
     }
 
     public func prompt(for text: String, mode: PromptMode) -> String {
-        switch mode {
-        case .voice:
-            voicePromptPrefix + text
-        case .text:
-            textPromptPrefix + text
+        let prefix = switch mode {
+        case .voice: voicePromptPrefix
+        case .text: textPromptPrefix
         }
+        return Self.toolRoutingHint + prefix + text
     }
 
     public func hermesBinary() throws -> URL {
