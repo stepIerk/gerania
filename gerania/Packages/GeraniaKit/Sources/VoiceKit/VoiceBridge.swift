@@ -14,15 +14,19 @@ public actor VoiceBridge {
         public var scriptOverridePath: String
         /// Home directory of the user.
         public var homeDirectory: String
+        /// Extra environment: the Picovoice key and the wake files (`WakeEngine`).
+        public var environment: [String: String]
 
         public init(
             pythonPath: String = "",
             scriptOverridePath: String = "",
-            homeDirectory: String = NSHomeDirectory()
+            homeDirectory: String = NSHomeDirectory(),
+            environment: [String: String] = [:]
         ) {
             self.pythonPath = pythonPath
             self.scriptOverridePath = scriptOverridePath
             self.homeDirectory = homeDirectory
+            self.environment = environment
         }
     }
 
@@ -112,6 +116,7 @@ public actor VoiceBridge {
         process.executableURL = URL(fileURLWithPath: python)
         process.arguments = [script, "--ipc"]
         process.environment = VoicePaths.environment(homeDirectory: configuration.homeDirectory)
+            .merging(configuration.environment) { _, extra in extra }
         let output = Pipe()
         let errors = Pipe()
         process.standardOutput = output

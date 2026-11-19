@@ -32,6 +32,9 @@ extension AppModel {
         case .stopComputerUse:
             Log.ui.info("computer use stopped from the HUD")
             stop()
+        case .stopAnswer:
+            Log.ui.info("answer stopped from the HUD")
+            stopAnswer()
         }
     }
 

@@ -23,7 +23,8 @@ public extension AppModel {
             let bridge = VoiceBridge(
                 configuration: VoiceBridge.Configuration(
                     pythonPath: settings.pythonPath,
-                    scriptOverridePath: settings.earsScriptOverridePath
+                    scriptOverridePath: settings.earsScriptOverridePath,
+                    environment: earsEnvironment()
                 )
             )
             voiceBridge = bridge
@@ -36,6 +37,7 @@ public extension AppModel {
         }
         await voiceBridge?.start()
         await voiceBridge?.send(.config(values: settings.microphoneThresholds))
+        await sendVoiceInputSettings()
         await voiceBridge?.send(.state(busy: false, speaking: false))
         lastVoiceBusy = false
         lastVoiceSpeaking = false
@@ -145,6 +147,8 @@ public extension AppModel {
             hud.hint = message
         case .bye:
             Log.voice.info("voice script finished")
+        case .engines, .wakeRejected, .speakerRejected, .speaker, .enrollProgress, .enrollDone:
+            handleVoiceInputEvent(event)
         }
     }
 

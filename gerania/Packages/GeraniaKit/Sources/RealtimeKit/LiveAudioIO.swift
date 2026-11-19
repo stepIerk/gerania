@@ -19,6 +19,8 @@ public final class LiveAudioIO {
     private var echoMode: LiveEchoMode = .automatic
     private var loggedFirstChunk = false
     private var uplinkEnabled = true
+    /// Closed by the listen mode or the owner gate: silence goes up instead of the mic.
+    private var inputGateOpen = true
     private var configurationObserver: NSObjectProtocol?
 
     public init() {}
@@ -116,6 +118,12 @@ public final class LiveAudioIO {
                         return
                     }
                     if self.echoMode == .halfDuplex, !self.uplinkEnabled {
+                        return
+                    }
+                    guard self.inputGateOpen else {
+                        // Silence, not nothing: Gemini's VAD needs it to close the turn.
+                        self.onAudio?(Data(count: converted.data.count))
+                        self.onLevel?(0)
                         return
                     }
                     if !self.loggedFirstChunk {
@@ -223,6 +231,10 @@ public final class LiveAudioIO {
 public extension LiveAudioIO {
     func setUplinkEnabled(_ enabled: Bool) {
         uplinkEnabled = enabled
+    }
+
+    func setInputGateOpen(_ open: Bool) {
+        inputGateOpen = open
     }
 
     func play(_ data: Data) {

@@ -34,6 +34,25 @@ public enum VoiceEvent: Sendable, Equatable {
     case error(message: String)
     /// The script is finishing.
     case bye
+    /// Which detectors run: Porcupine for «Гера» and Eagle for the owner voice.
+    case engines(keyword: Bool, keywordDetail: String, owner: Bool, ownerDetail: String)
+    /// «Гера» was heard, but not in the owner's voice.
+    case wakeRejected(score: Double)
+    /// A command or a stop word was said by someone else.
+    case speakerRejected(score: Double)
+    /// Who talks while the live dialog owns the microphone.
+    case speaker(SpeakerState)
+    /// Recording of the owner voice: progress in percent.
+    case enrollProgress(percent: Double)
+    /// The owner profile is written.
+    case enrollDone(path: String)
+
+    /// Who talks during the live dialog.
+    public enum SpeakerState: String, Sendable, Equatable {
+        case owner
+        case other
+        case silence
+    }
 
     /// Where the command came from.
     public enum CommandOrigin: String, Sendable, Equatable {
@@ -105,6 +124,23 @@ public enum VoiceEvent: Sendable, Equatable {
             return .error(message: payload["message"] as? String ?? "")
         case "bye":
             return .bye
+        case "engines":
+            return .engines(
+                keyword: payload["keyword"] as? Bool ?? false,
+                keywordDetail: payload["keyword_detail"] as? String ?? "",
+                owner: payload["owner"] as? Bool ?? false,
+                ownerDetail: payload["owner_detail"] as? String ?? ""
+            )
+        case "wake_rejected":
+            return .wakeRejected(score: payload["score"] as? Double ?? 0)
+        case "speaker_rejected":
+            return .speakerRejected(score: payload["score"] as? Double ?? 0)
+        case "speaker":
+            return (payload["who"] as? String).flatMap(SpeakerState.init(rawValue:)).map { VoiceEvent.speaker($0) }
+        case "enroll_progress":
+            return .enrollProgress(percent: payload["percent"] as? Double ?? 0)
+        case "enroll_done":
+            return .enrollDone(path: payload["path"] as? String ?? "")
         default:
             return nil
         }

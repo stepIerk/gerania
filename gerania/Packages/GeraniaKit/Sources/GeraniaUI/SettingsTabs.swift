@@ -84,8 +84,9 @@ public struct SettingsTabs: View {
             }
             Divider()
             ShortcutRow("Открыть мини-окно", name: .openInput)
-            ShortcutRow("Говорить (push to talk)", name: .pushToTalk)
-            ShortcutRow("Остановить всё", name: .stopAll)
+            ShortcutRow("Говорить (нажать или удерживать)", name: .pushToTalk)
+            ShortcutRow("Остановить ответ", name: .stopAll)
+            ShortcutRow("Микрофон вкл/выкл", name: .toggleMicrophone)
             HStack {
                 Text("Скрывать через")
                 Slider(value: $settings.autoHideSeconds, in: 2 ... 30, step: 1)
@@ -126,6 +127,7 @@ public struct SettingsTabs: View {
     private var voice: some View {
         Form {
             Toggle("Голосовой режим", isOn: $settings.voiceEnabled)
+            VoiceInputSection(model: GeraniaAppRoot.shared.model)
             liveDialog
             Toggle("Озвучивать ответы", isOn: $settings.speakAnswers)
             TextField("Голос", text: $settings.voiceName)

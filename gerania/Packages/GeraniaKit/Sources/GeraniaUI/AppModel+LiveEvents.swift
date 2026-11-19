@@ -15,6 +15,7 @@ extension AppModel {
 
     func handleLiveSpeaking(_ speaking: Bool) {
         liveSpeaking = speaking
+        updateLiveInputGate()
         guard isLiveActive else {
             return
         }

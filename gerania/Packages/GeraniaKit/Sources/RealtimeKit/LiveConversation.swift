@@ -14,7 +14,7 @@ public final class LiveConversation {
     public let configuration: LiveConversationConfiguration
 
     private let transport: GeminiLiveTransport
-    private let audio = LiveAudioIO()
+    let audio = LiveAudioIO()
     private var eventTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var startedAt = Date()
@@ -24,6 +24,8 @@ public final class LiveConversation {
     private var loggedFirstAudio = false
     private var loggedFirstInput = false
     private var loggedFirstOutput = false
+    /// The person stopped Gera: the rest of this answer is not played.
+    var droppingAnswer = false
 
     public init(configuration: LiveConversationConfiguration) {
         self.configuration = configuration
@@ -216,8 +218,10 @@ public final class LiveConversation {
                 Log.voice.notice("live: first output transcript")
             }
         case .turnComplete:
+            droppingAnswer = false
             touch()
         case .interrupted:
+            droppingAnswer = false
             audio.stopPlayback()
             touch()
         case .closed:
@@ -234,7 +238,9 @@ public final class LiveConversation {
                 loggedFirstAudio = true
                 Log.voice.notice("live: first audio chunk received")
             }
-            audio.play(data)
+            if !droppingAnswer {
+                audio.play(data)
+            }
         }
 
         onEvent?(event)

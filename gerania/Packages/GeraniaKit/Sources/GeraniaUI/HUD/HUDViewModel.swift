@@ -16,6 +16,8 @@ public final class HUDViewModel {
     public var isVisible = false
     /// Whether the microphone belongs to the live Gemini dialog.
     public var isLive = false
+    /// The live dialog does not send the microphone now (push-to-talk, another voice).
+    public var isLiveMicClosed = false
     /// Short name of the model that answers the current turn.
     public var modelLabel: String?
     /// Whether the header shows `modelLabel`.

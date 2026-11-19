@@ -247,9 +247,9 @@ extension AppModel {
         }
     }
 
-    /// Push to talk: the same as the wake word.
+    /// Push to talk: the same as the wake word, and the ears wait for the phrase.
     public func pushToTalk() {
-        dispatch(.wake(at: Date().timeIntervalSince1970))
+        wakeByHotkey()
     }
 
     /// Plays a fixture with the speed of a real answer.

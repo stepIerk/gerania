@@ -15,7 +15,7 @@ public struct HUDHeader: View {
 
     private var title: String {
         if model.isLive, case .listening = model.state {
-            return "Диалог"
+            return model.isLiveMicClosed ? "Диалог · ⌃⌥G — говорить" : "Диалог"
         }
         return model.state.displayName
     }
@@ -31,6 +31,11 @@ public struct HUDHeader: View {
                 ModelBadge(text: label)
             }
             Spacer(minLength: 8)
+            if model.state.isBusy {
+                HeaderButton(symbol: "stop.fill", help: "Остановить ответ (⌃⌥⇧G)") {
+                    model.onAction?(.stopAnswer)
+                }
+            }
             if hasAnswer {
                 HeaderButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Развернуть ответ") {
                     model.onAction?(.expandAnswer)
@@ -88,5 +93,6 @@ private struct HeaderButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .help(help)
+        .accessibilityLabel(help)
     }
 }

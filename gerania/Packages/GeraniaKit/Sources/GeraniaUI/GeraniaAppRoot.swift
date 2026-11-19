@@ -102,10 +102,16 @@ public final class GeraniaAppRoot {
             Task { @MainActor in model?.openInput() }
         }
         KeyboardShortcuts.onKeyDown(for: .pushToTalk) { [weak model] in
-            Task { @MainActor in model?.pushToTalk() }
+            Task { @MainActor in model?.talkKeyDown() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .pushToTalk) { [weak model] in
+            Task { @MainActor in model?.talkKeyUp() }
         }
         KeyboardShortcuts.onKeyDown(for: .stopAll) { [weak model] in
-            Task { @MainActor in model?.stop() }
+            Task { @MainActor in model?.stopAnswer() }
+        }
+        KeyboardShortcuts.onKeyDown(for: .toggleMicrophone) { [weak model] in
+            Task { @MainActor in model?.toggleMicrophone() }
         }
     }
 }
