@@ -17,6 +17,8 @@ public final class GeraniaAppRoot {
     public let mainWindow: MainWindowController
     /// Finished plans and the health of the Hermes scheduler.
     public let cronMonitor: CronMonitor
+    /// The first-run wizard; reopened from the menu bar.
+    public let onboarding: OnboardingWindowController
 
     private init() {
         let settings = GeraSettings()
@@ -26,8 +28,17 @@ public final class GeraniaAppRoot {
         self.chats = chats
         model = AppModel(settings: settings, hud: hud, chats: chats)
         panels = PanelCoordinator(settings: settings, hud: hud, chats: chats)
-        mainWindow = MainWindowController(model: model, chats: chats)
+        let window = MainWindowController(model: model, chats: chats)
+        mainWindow = window
         cronMonitor = CronMonitor(directory: CronJobsStore.defaultDirectory())
+        let setup = OnboardingModel(settings: settings)
+        let setupWindow = OnboardingWindowController(model: setup)
+        onboarding = setupWindow
+        setup.appModel = model
+        setup.onFinish = { [weak setupWindow, weak window] in
+            setupWindow?.close()
+            window?.show()
+        }
         model.panels = panels
         chats.attach(service: model)
         panels.onSendPrompt = { [weak model] text, isNewChat in
