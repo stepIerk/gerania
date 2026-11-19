@@ -1214,3 +1214,34 @@ Swift (VoiceKit):
 
 Осталось: шаг «Голос и «Гера»» в мастере первого запуска (сейчас — вкладка «Голос»);
 обучение собственного слова, если Picovoice перестанет подходить.
+
+## 2026-11-19 — wake на Whisper без Picovoice, защита от шума, computer_use
+
+Что было сломано:
+- Porcupine/Eagle больше нельзя использовать бесплатно.
+- Шум будил Геру: спектральный фильтр работал только в конце фразы, а wake на ходу
+  (малая модель) успевал сработать раньше. Whisper «слышал» «Гера» в шуме.
+- Управление компьютером: агент выбирал `browser_cdp`, тот отвечал «No CDP endpoint
+  is available…» — человек видел «не настроен URL».
+
+Сделано:
+- Удалено: `pvporcupine`/`pveagle`, `WakeEngine`, `VoiceEnrollment`,
+  `AppModel+OwnerVoice`, проверка диктора, события `wake_rejected`/`speaker*`/`enroll*`,
+  команда `owner_gate`, мониторинг говорящего в Live.
+- Python: `gera_vad.py` (Silero VAD через onnxruntime + спектральный детектор с основным
+  тоном), VAD с покадровой проверкой речи и адаптивным порогом, `Transcript` со
+  словными вероятностями, `wake_confident`, порог доли речи для wake на ходу, новые
+  ключи `config`. `gera_wake.py`: режимы слушания + загрузчик своей wake-модели
+  (`GERA_WAKE_PLUGIN`). `setup_voice.sh` качает модель Silero.
+- Swift: `NoiseRejection` (Мягкая/Обычная/Строгая), путь к своей wake-модели,
+  раздел настроек «Слово «Гера» и шум», `engines` с детектором речи,
+  `HermesConfig.toolRoutingHint`.
+- Тесты: Python 92 (новые — шум, Silero с фейковой ONNX-сессией, уверенность в
+  «Гера», своя модель) — **зелёные в облаке**; Swift — `VoiceInputSettingsTests`,
+  `VoiceInputTests`, `VoiceInputIPCTests`, `HermesConfigToolsTests`.
+
+Проверено: Python — `pytest tools/voice_tests` (92 passed). Swift — без компилятора,
+сборку и живую проверку делает человек (HUMAN_TODO §14).
+
+Осталось: своя wake-модель (openWakeWord) — точка расширения готова; реальная модель
+Silero не запускалась в облаке (нет сети для pip) — ABI сверен с документацией v5/v6.

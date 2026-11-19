@@ -2,15 +2,11 @@ import AppKit
 import GeraniaCore
 import SwiftUI
 import UniformTypeIdentifiers
-import VoiceKit
 
-/// «Голос» → microphone: when Gera listens, the «Гера» detector and the owner voice.
+/// «Голос» → microphone: when Gera listens, how hard she filters noise and
+/// what catches «Гера».
 struct VoiceInputSection: View {
     let model: AppModel
-
-    @State private var accessKey = ""
-    @State private var message: String?
-    @State private var status = WakeEngine.status()
 
     private var input: VoiceInputController {
         model.voiceInput
@@ -23,116 +19,63 @@ struct VoiceInputSection: View {
                     Text(mode.title).tag(mode)
                 }
             }
-            Text(input.settings.listenMode.detail)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            note(input.settings.listenMode.detail)
         }
-        Section("Слово «Гера»") {
-            engineRow(
-                active: input.keywordActive,
-                title: input.keywordActive ? "Детектор Porcupine работает" : "Запасной режим: Whisper",
-                detail: input.keywordActive
-                    ? "«Гера» ловится мгновенно, Whisper включается только после неё."
-                    : "Причина: \(input.keywordDetail). Без детектора Гера просыпается медленнее."
+        Section("Слово «Гера» и шум") {
+            statusRow(
+                ok: input.usesNeuralVAD,
+                title: input.usesNeuralVAD ? "Речь отличает нейросеть Silero" : "Речь отличает спектральный фильтр",
+                detail: "\(input.speechDetail). «Гера»: \(input.wakeDetail)."
             )
-            HStack {
-                SecureField(keyPrompt, text: $accessKey)
-                Button("Сохранить") {
-                    let key = accessKey
-                    accessKey = ""
-                    Task {
-                        message = await model.saveWakeKey(key)
-                        refresh()
-                    }
+            Picker("Защита от шума", selection: noiseRejection) {
+                ForEach(NoiseRejection.allCases) { level in
+                    Text(level.title).tag(level)
                 }
-                .disabled(accessKey.isEmpty)
+            }
+            note(input.settings.noiseRejection.detail)
+        }
+        Section("Своя модель wake-слова") {
+            LabeledContent("Модуль") {
+                Text(pluginName)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             HStack {
-                fileButton("Файл слова (.ppn)…", ready: status.hasKeyword, destination: WakeEngine.keywordURL())
-                fileButton("Русская модель (.pv)…", ready: status.hasModel, destination: WakeEngine.modelURL())
-            }
-            LabeledContent("Чувствительность") {
-                Slider(value: sensitivity, in: 0.3 ... 0.9, step: 0.05) { editing in
-                    if !editing {
-                        Task { await model.restartEars() }
+                Button("Выбрать модуль…") {
+                    pickPlugin()
+                }
+                if !input.settings.wakePluginPath.isEmpty {
+                    Button("Убрать — снова Whisper") {
+                        setPlugin("")
                     }
                 }
-                .frame(width: 180)
             }
-            Text("Ключ и файл слова создаются бесплатно в Picovoice Console — инструкция в HUMAN_TODO §13.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(.secondary)
-        }
-        ownerSection
-        if let message {
-            Text(message)
-                .font(.system(size: 11))
-                .textSelection(.enabled)
-        }
-    }
-
-    @ViewBuilder
-    private var ownerSection: some View {
-        Section("Только мой голос") {
-            engineRow(
-                active: input.ownerActive,
-                title: input.ownerActive ? "Голос владельца проверяется" : "Проверка голоса выключена",
-                detail: input.ownerActive
-                    ? "Чужие голоса, телевизор и речь самой Геры не будят её и не дают команд."
-                    : "Причина: \(input.ownerDetail)."
+            note(
+                "Python-модуль с функцией create(environ), например обёртка над openWakeWord. "
+                    + "Пока его нет, «Гера» распознаёт Whisper. Формат — в docs/VOICE_IPC.md."
             )
-            Toggle("Слушать только мой голос", isOn: ownerGate)
-                .disabled(!status.hasOwnerProfile)
-            if let percent = input.enrollPercent {
-                ProgressView(value: percent, total: 100) {
-                    Text(input.enrollMessage ?? "Запись…")
-                        .font(.system(size: 11))
-                }
-                Button("Отменить запись") {
-                    model.cancelOwnerVoiceRecording()
-                }
-            } else {
-                HStack {
-                    Button(status.hasOwnerProfile ? "Перезаписать мой голос" : "Записать мой голос") {
-                        Task {
-                            await model.recordOwnerVoice()
-                            refresh()
-                        }
-                    }
-                    .disabled(!status.hasKey)
-                    if status.hasOwnerProfile {
-                        Button("Удалить запись") {
-                            Task {
-                                await model.forgetOwnerVoice()
-                                refresh()
-                            }
-                        }
-                    }
-                }
-                if let note = input.enrollMessage {
-                    Text(note)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            LabeledContent("Строгость") {
-                Slider(value: threshold, in: 0.3 ... 0.8, step: 0.05) { editing in
-                    if !editing {
-                        Task { await model.restartEars() }
-                    }
-                }
-                .frame(width: 180)
-            }
         }
     }
 
     // MARK: - Pieces
 
-    private func engineRow(active: Bool, title: String, detail: String) -> some View {
+    private var pluginName: String {
+        let path = input.settings.wakePluginPath
+        return path.isEmpty ? "не выбран" : (path as NSString).lastPathComponent
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func statusRow(ok: Bool, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: active ? "checkmark.circle.fill" : "exclamationmark.circle")
-                .foregroundStyle(active ? Color.green : Color.orange)
+            Image(systemName: ok ? "checkmark.circle.fill" : "info.circle")
+                .foregroundStyle(ok ? Color.green : Color.secondary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -141,37 +84,24 @@ struct VoiceInputSection: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
         }
         .accessibilityElement(children: .combine)
     }
 
-    private func fileButton(_ title: String, ready: Bool, destination: URL) -> some View {
-        Button {
-            pick(into: destination)
-        } label: {
-            Label(title, systemImage: ready ? "checkmark.circle.fill" : "doc.badge.plus")
-        }
-    }
-
-    private func pick(into destination: URL) {
+    private func pickPlugin() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [UTType(filenameExtension: destination.pathExtension) ?? .data]
+        panel.allowedContentTypes = [UTType(filenameExtension: "py") ?? .plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task {
-            message = await model.installWakeFile(from: url, as: destination)
-            refresh()
-        }
+        setPlugin(url.path)
     }
 
-    private var keyPrompt: String {
-        status.hasKey ? "Ключ Picovoice сохранён" : "Ключ Picovoice (AccessKey)"
-    }
-
-    private func refresh() {
-        status = WakeEngine.status()
+    private func setPlugin(_ path: String) {
+        input.settings.wakePluginPath = path
+        Task { await model.restartEars() }
     }
 
     // MARK: - Bindings
@@ -186,27 +116,13 @@ struct VoiceInputSection: View {
         )
     }
 
-    private var ownerGate: Binding<Bool> {
+    private var noiseRejection: Binding<NoiseRejection> {
         Binding(
-            get: { input.settings.ownerGateEnabled },
-            set: { enabled in
-                input.settings.ownerGateEnabled = enabled
+            get: { input.settings.noiseRejection },
+            set: { level in
+                input.settings.noiseRejection = level
                 Task { await model.sendVoiceInputSettings() }
             }
-        )
-    }
-
-    private var sensitivity: Binding<Double> {
-        Binding(
-            get: { input.settings.keywordSensitivity },
-            set: { input.settings.keywordSensitivity = $0 }
-        )
-    }
-
-    private var threshold: Binding<Double> {
-        Binding(
-            get: { input.settings.ownerThreshold },
-            set: { input.settings.ownerThreshold = $0 }
         )
     }
 }

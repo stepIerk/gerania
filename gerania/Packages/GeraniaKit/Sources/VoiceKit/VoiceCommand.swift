@@ -28,8 +28,6 @@ public enum VoiceCommand: Sendable, Equatable {
     case shutdown
     /// When the ears listen: `always`, `not_while_answering`, `push_to_talk`.
     case listenMode(String)
-    /// Accept wake words and commands only in the owner's voice.
-    case ownerGate(enabled: Bool)
     /// Hold-to-talk released: send the phrase now, without waiting for the pause.
     case flush
 
@@ -58,8 +56,6 @@ public enum VoiceCommand: Sendable, Equatable {
             Self.encode(["type": "shutdown"])
         case let .listenMode(mode):
             Self.encode(["type": "listen_mode", "mode": mode])
-        case let .ownerGate(enabled):
-            Self.encode(["type": "owner_gate", "enabled": enabled])
         case .flush:
             Self.encode(["type": "flush"])
         }

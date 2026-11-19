@@ -2,16 +2,15 @@ import Foundation
 import GeraniaCore
 @testable import GeraniaUI
 import Testing
+import VoiceKit
 
 @Suite("Голосовой ввод: режимы и сочетания")
 @MainActor
 struct VoiceInputTests {
-    @Test("Живой диалог «всегда слушать»: закрыт только чужим голосом")
+    @Test("Живой диалог «всегда слушать»: микрофон открыт")
     func alwaysMode() {
         #expect(open(.always))
         #expect(open(.always, modelSpeaking: true))
-        #expect(!open(.always, otherSpeaking: true))
-        #expect(open(.always, talkHeld: true, otherSpeaking: true))
     }
 
     @Test("«Не слушать во время ответа»: глух, пока Гера говорит, кроме ⌃⌥G")
@@ -26,7 +25,19 @@ struct VoiceInputTests {
         #expect(!open(.pushToTalk))
         #expect(open(.pushToTalk, talkHeld: true))
         #expect(open(.pushToTalk, talkLatched: true))
-        #expect(!open(.pushToTalk, talkLatched: true, otherSpeaking: true))
+    }
+
+    @Test("«Уши» сообщают, чем ловят «Гера» и отличают речь")
+    func engines() {
+        let defaults = UserDefaults(suiteName: "voice-input-ui-\(UUID().uuidString)") ?? .standard
+        let model = AppModel(settings: GeraSettings(defaults: defaults))
+
+        let event = VoiceEvent.engines(wake: "Whisper", keyword: false, speech: "silero", speechDetail: "Silero VAD")
+        model.handleVoiceInputEvent(event)
+
+        #expect(model.voiceInput.usesNeuralVAD)
+        #expect(model.voiceInput.wakeDetail == "Whisper")
+        #expect(!model.voiceInput.keywordActive)
     }
 
     @Test("Сочетание без включённого микрофона подсказывает, что делать")
@@ -54,15 +65,13 @@ struct VoiceInputTests {
         _ mode: ListenMode,
         modelSpeaking: Bool = false,
         talkHeld: Bool = false,
-        talkLatched: Bool = false,
-        otherSpeaking: Bool = false
+        talkLatched: Bool = false
     ) -> Bool {
         LiveInputPolicy.isOpen(
             mode: mode,
             modelSpeaking: modelSpeaking,
             talkHeld: talkHeld,
-            talkLatched: talkLatched,
-            otherSpeaking: otherSpeaking
+            talkLatched: talkLatched
         )
     }
 }
