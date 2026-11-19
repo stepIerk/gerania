@@ -35,6 +35,20 @@ public final class GeraniaAppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    /// ⌘Q during a task asks first: quitting cuts the answer or the background work.
+    public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let reason = GeraniaAppRoot.shared.model.busyReasonForQuit else {
+            return .terminateNow
+        }
+        let alert = NSAlert()
+        alert.messageText = "Гера ещё работает"
+        alert.informativeText = "\(reason) Если выйти, работа прервётся. "
+            + "Чтобы убрать окно, закройте его: Гера останется в меню-баре."
+        alert.addButton(withTitle: "Выйти")
+        alert.addButton(withTitle: "Остаться")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    }
+
     /// Launched by a human: the window of the application opens (inside it plays the
     /// animation of the loading screen) and the voice waits for the button. Launched at
     /// login: the voice starts quietly, the window does not appear.

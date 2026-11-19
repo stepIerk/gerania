@@ -14,6 +14,10 @@ public struct MenuBarContent: View {
     }
 
     public var body: some View {
+        if NetworkStatus.shared.isOffline {
+            Text("Нет интернета — облачные модели недоступны")
+            Divider()
+        }
         Button("Спросить…") {
             model.openInput()
         }

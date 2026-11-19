@@ -252,6 +252,8 @@ extension GeminiLiveTransport {
             return
         }
         closed = true
+        // Quota and key refusals come in the close frame: read it before dropping the socket.
+        let closeReason = socket?.closeReason.flatMap { String(data: $0, encoding: .utf8) }
         receiveTask?.cancel()
         receiveTask = nil
         pingTask?.cancel()
@@ -260,7 +262,7 @@ extension GeminiLiveTransport {
         urlSession = nil
         socket = nil
 
-        let mapped = map(error)
+        let mapped = LiveError(closeReason: closeReason) ?? map(error)
         setupContinuation?.resume(throwing: mapped)
         setupContinuation = nil
         emit(.error(mapped))

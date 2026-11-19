@@ -116,7 +116,7 @@ extension AppModel {
         guard let conversation = liveConversation else {
             return
         }
-        let effective = settings.liveModel.contains("extended-thinking") ? nil : scheduling
+        let effective = (liveActiveModel ?? settings.liveModel).contains("extended-thinking") ? nil : scheduling
         Task {
             try? await conversation.sendToolResponse(
                 callID: call.id,

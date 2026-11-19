@@ -19,11 +19,26 @@ public enum LiveError: Error, LocalizedError, Sendable, Equatable {
             || lower.contains("permission denied")
         {
             self = .unauthorized
-        } else if lower.contains("quota") || lower.contains("rate limit") {
+        } else if lower.contains("quota")
+            || lower.contains("rate limit")
+            || lower.contains("resource_exhausted")
+            || lower.contains("resource exhausted")
+            || lower.contains("too many requests")
+        {
             self = .quotaExceeded
         } else {
             self = .protocolError(serverMessage)
         }
+    }
+
+    /// The error named by the server in its WebSocket close frame, if it named one.
+    public init?(closeReason: String?) {
+        guard let reason = closeReason?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !reason.isEmpty
+        else {
+            return nil
+        }
+        self.init(serverMessage: reason)
     }
 
     public var errorDescription: String? {

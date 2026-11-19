@@ -92,7 +92,8 @@ extension AppModel {
             break
         case let .error(error):
             Log.voice.error("live error: \(error.localizedDescription, privacy: .public)")
-            hud.hint = error.localizedDescription
+            noteLiveError(error)
+            hud.hint = error == .quotaExceeded ? liveFailureHint(error) : error.localizedDescription
             if isLiveActive {
                 Task { await finishLive(reason: error.localizedDescription) }
             }

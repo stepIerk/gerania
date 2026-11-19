@@ -70,6 +70,7 @@ public final class GeraniaAppRoot {
         registerShortcuts()
         startChatsRefresh()
         startCronMonitor()
+        NetworkStatus.shared.start()
     }
 
     /// Banners and HUD cards for plans that Hermes ran in the background.

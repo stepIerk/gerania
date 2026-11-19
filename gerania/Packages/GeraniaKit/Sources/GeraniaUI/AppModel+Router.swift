@@ -78,6 +78,9 @@ extension AppModel {
 
     /// Человеческое сообщение об ошибке вместо технического текста провайдера.
     func friendlyMessage(for error: HermesError) -> String {
+        if NetworkStatus.shared.isOffline {
+            return NetworkStatus.offlineMessage
+        }
         let models = modelCandidates
         let list = models.isEmpty ? "" : " Проверено: \(models.joined(separator: " → "))."
         if error.isAuthFailure {
