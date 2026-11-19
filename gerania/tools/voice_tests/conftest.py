@@ -63,3 +63,13 @@ def ipc(monkeypatch):
     monkeypatch.setattr(ears, "IPC_MODE", True)
     instance = ears.IPC()
     return instance
+
+
+@pytest.fixture(autouse=True)
+def _fresh_state():
+    """`State` is class-level: a wake word of one test must not leak into the next."""
+    ears.State.awaiting = False
+    ears.State.await_deadline = 0.0
+    ears.State.keyword_at = 0.0
+    ears.State.flush = False
+    yield

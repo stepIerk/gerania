@@ -25,4 +25,6 @@ public enum HUDAction: Sendable {
     case answer(ServerRequest, ServerRequestAnswer)
     /// Stop the turn that is driving the computer.
     case stopComputerUse
+    /// Stop the answer: the speech and the running turn.
+    case stopAnswer
 }

@@ -1,4 +1,8 @@
 mlx-whisper>=0.4
 numpy>=2.0
 sounddevice>=0.5
+# Wake word «Гера» and the owner voice (optional at runtime: without the
+# Picovoice AccessKey the ears fall back to the Whisper wake word).
+pvporcupine>=3.0
+pveagle>=1.0
 pytest>=8

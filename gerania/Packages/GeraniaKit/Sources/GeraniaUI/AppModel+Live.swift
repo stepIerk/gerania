@@ -150,6 +150,7 @@ extension AppModel {
                 return
             }
             isLiveActive = true
+            updateLiveInputGate()
             try await flushLiveText(seed: seed, into: conversation)
             hud.hint = nil
             liveQuota.markWorking(model)

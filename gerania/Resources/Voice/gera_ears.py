@@ -28,6 +28,10 @@ import numpy as np
 import sounddevice as sd
 import mlx_whisper
 
+# The helper module lives next to this script (also inside the app bundle).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gera_wake  # noqa: E402
+
 # ============================== НАСТРОЙКИ ==============================
 
 # --- распознавание речи ---
@@ -67,6 +71,8 @@ WAKE_LOOSE_RE = re.compile(
 )
 WAKE_MAX_PREFIX_WORDS = 2      # перед "Гера" допускается не больше 2 слов ("ну", "слушай")
 AWAIT_COMMAND_SEC = 8.0
+# After Porcupine hears «Гера», Whisper may read the phrase for this long.
+KEYWORD_WINDOW_SEC = 4.0
 MIN_COMMAND_CHARS = 3
 
 # --- быстрый wake ---
@@ -141,6 +147,8 @@ class IPC:
         self.mute_keep_phrase = True
         self.suspended = False
         self.should_exit = False
+        self.listen_mode = gera_wake.LISTEN_ALWAYS
+        self.owner_gate = True
 
     # --- исходящие события ---
     def emit(self, kind: str, **fields) -> None:
@@ -197,6 +205,14 @@ class IPC:
             self.suspended = False
         elif kind == "config":
             apply_config(command)
+        elif kind == "listen_mode":
+            mode = command.get("mode")
+            if mode in gera_wake.LISTEN_MODES:
+                self.listen_mode = mode
+        elif kind == "owner_gate":
+            self.owner_gate = bool(command.get("enabled"))
+        elif kind == "flush":
+            State.flush = True
         elif kind == "shutdown":
             self.should_exit = True
 
@@ -268,6 +284,8 @@ def apply_config(command: dict) -> None:
 class State:
     awaiting = False
     await_deadline = 0.0
+    keyword_at = 0.0     # when Porcupine heard «Гера»
+    flush = False        # hold-to-talk released: send the command now
 
 
 # ============================ "ЭТО ПОХОЖЕ НА ГОЛОС?" (спектр) ======================
@@ -603,9 +621,45 @@ def levels_mode():
             time.sleep(1)
 
 
+def enroll_mode(out_path: str) -> int:
+    """Records the owner voice profile: `--enroll-voice PATH --ipc`."""
+    ipc = IPC()
+    if IPC_MODE:
+        ipc.start_reader()
+    frames: "queue.Queue[np.ndarray]" = queue.Queue()
+
+    def callback(indata, count, t, status):  # noqa: ARG001
+        frames.put(indata[:, 0].copy())
+
+    def read_frame():
+        if ipc.should_exit:
+            return None
+        try:
+            return frames.get(timeout=5.0)
+        except queue.Empty:
+            return None
+
+    try:
+        with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
+                            blocksize=FRAME, callback=callback):
+            ipc.emit("enroll_started")
+            ok = gera_wake.enroll_owner(out_path, read_frame, ipc.emit)
+    except Exception as error:  # noqa: BLE001
+        ipc.emit("error", message=f"микрофон: {error}")
+        ok = False
+    ipc.emit("bye")
+    return 0 if ok else 1
+
+
 def main():
     if LEVELS_MODE:
         return levels_mode()
+    if "--enroll-voice" in sys.argv:
+        index = sys.argv.index("--enroll-voice")
+        if index + 1 >= len(sys.argv):
+            print("--enroll-voice требует путь к файлу профиля", file=sys.stderr, flush=True)
+            return 2
+        return enroll_mode(sys.argv[index + 1])
 
     ipc = IPC()
     if IPC_MODE:
@@ -614,7 +668,48 @@ def main():
     print("=== GERANIA ears ===", file=sys.stderr, flush=True)
     print(f"🎙️  Загрузка {MODEL_NAME} ...", file=sys.stderr, flush=True)
     transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32))
+    detector, wake_detail = gera_wake.KeywordDetector.create()
+    verifier, owner_detail = gera_wake.OwnerVerifier.create()
+    print(f"🔔 wake: {wake_detail}; 🧑 голос владельца: {owner_detail}", file=sys.stderr, flush=True)
     ipc.emit("ready", model=MODEL_NAME)
+    ipc.emit("engines", keyword=detector is not None, keyword_detail=wake_detail,
+             owner=verifier is not None, owner_detail=owner_detail)
+
+    def keyword_recent() -> bool:
+        """Porcupine heard «Гера» a moment ago: Whisper may read this phrase."""
+        return time.time() - State.keyword_at < KEYWORD_WINDOW_SEC
+
+    def whisper_needed() -> bool:
+        """With Porcupine, Whisper runs only after the wake word or for stop words."""
+        return (detector is None or State.awaiting or keyword_recent()
+                or ipc.busy or ipc.speaking)
+
+    def owner_gate_active() -> bool:
+        return ipc.owner_gate and verifier is not None
+
+    def owner_ok() -> bool:
+        """The phrase was said by the owner (always true without the gate)."""
+        if not owner_gate_active():
+            return True
+        return max(utt_owner_best, verifier.score()) >= verifier.gate.threshold
+
+    def on_keyword() -> None:
+        """Porcupine heard «Гера»."""
+        if not gera_wake.wake_allowed(ipc.listen_mode, ipc.speaking, owner_gate_active()):
+            return
+        if owner_gate_active() and not verifier.is_owner():
+            ipc.emit("wake_rejected", reason="чужой голос", score=round(verifier.score(), 2))
+            print(f"🙅 «Гера» чужим голосом: {verifier.score():.2f}", file=sys.stderr, flush=True)
+            return
+        now = time.time()
+        if now - State.keyword_at < 1.0:
+            return
+        State.keyword_at = now
+        State.awaiting = True
+        State.await_deadline = now + AWAIT_COMMAND_SEC
+        tracker.wake_sent = True
+        ipc.emit("wake", inline_command=None, via="keyword")
+        print("🔔 проснулись: Porcupine", file=sys.stderr, flush=True)
     print("✅ Готово.", file=sys.stderr, flush=True)
 
     def dispatch(cmd: str, via: str):
@@ -628,6 +723,10 @@ def main():
         """Отправляет команду, если она ещё не уходила (частичный ответ не дублируем)."""
         if tracker.stop_sent:
             return              # быстрый стоп уже отправлен
+        if not owner_ok():
+            ipc.emit("speaker_rejected", score=round(verifier.score(), 2))
+            print("🙅 команда чужим голосом — пропускаю", file=sys.stderr, flush=True)
+            return
         cmd = clean_command(cmd)
         if not is_real_command(cmd):
             return
@@ -702,13 +801,17 @@ def main():
         # --- стоп-слова вне режима ввода ---
         # `tracker.woke` — призыв был в этой же реплике, просто финальная
         # расшифровка потеряла «Гера»: «Гера, стоп» остаётся явным стопом.
-        if stop and (m or tracker.woke or (STOP_WHEN_BUSY and (ipc.busy or ipc.speaking))):
+        if stop and owner_ok() and (m or tracker.woke or (STOP_WHEN_BUSY and (ipc.busy or ipc.speaking))):
             scope = "explicit" if (m or tracker.woke) else "busy"
             ipc.emit("stop", scope=scope)
             return
 
         # Пока Гера говорит, микрофон слышит её саму: не будимся на своей озвучке.
         if ipc.speaking:
+            return
+
+        # С Porcupine wake-слово ловит он, а не Whisper по тексту.
+        if detector is not None and not keyword_recent():
             return
 
         if not m:
@@ -738,13 +841,15 @@ def main():
             tracker.covered = covered
         if not tracker.woke and not tracker.stop_sent and (ipc.busy or ipc.speaking):
             # Быстрый стоп: короткое «стоп» во время работы не ждём конца фразы.
-            if is_stop(text):
+            if is_stop(text) and owner_ok():
                 tracker.stop_sent = True
                 ipc.emit("stop", scope="busy")
                 print(f"🛑 быстрый стоп: {text!r}", file=sys.stderr, flush=True)
                 return
+        if detector is not None and not (State.awaiting or keyword_recent()):
+            return      # Porcupine owns the wake word: Whisper only checks stop words here
         if tracker.observe(text):
-            if not tracker.wake_sent:
+            if not tracker.wake_sent and not keyword_recent():
                 tracker.wake_sent = True
                 inline = tracker.command if is_real_command(tracker.command) else None
                 ipc.emit("wake", inline_command=inline)
@@ -757,6 +862,8 @@ def main():
     def process_partial() -> None:
         """Отдаёт реплику на фоновое распознавание: цикл VAD не должен ждать Whisper."""
         nonlocal last_partial_at
+        if not whisper_needed():
+            return
         duration = vad.duration()
         if duration < PARTIAL_MIN_SEC:
             return
@@ -793,6 +900,8 @@ def main():
         Если последняя гипотеза покрывает всю реплику, берём её: она уже готова,
         и команда уходит мгновенно. Иначе разбираем реплику заново большой моделью.
         """
+        if not whisper_needed():
+            return
         audio = vad.snapshot()
         if audio.size == 0:
             return
@@ -818,7 +927,7 @@ def main():
         elif State.awaiting:
             # Команда ушла (push-to-talk) — ожидание снимаем, иначе придёт таймаут.
             State.awaiting = False
-            send_once(clean_command(text), "followup")
+            send_once(clean_command(command_after_wake(text) or text), "followup")
 
     q: "queue.Queue[np.ndarray]" = queue.Queue()
     tracker = WakeTracker()
@@ -856,6 +965,8 @@ def main():
     vad = VAD()
     last_level_at = 0.0
     stream = None
+    utt_owner_best = 0.0
+    speakers = gera_wake.SpeakerTracker()
     try:
         stream = open_stream()
         while True:
@@ -864,19 +975,38 @@ def main():
 
             # Приложение забирает микрофон на время live-сессии Gemini.
             if ipc.suspended:
-                if stream is not None:
+                # With the owner gate the microphone stays open (macOS lets two
+                # clients record): the ears tell the live dialog who is talking.
+                monitor = owner_gate_active()
+                if stream is not None and not monitor:
                     close_stream(stream)
                     stream = None
-                ipc.emit("suspended")
+                ipc.emit("suspended", monitoring=monitor)
                 State.awaiting = False
                 vad.reset()
                 tracker.reset()
                 clear_queue()
                 pause_handled = False
+                speakers.reset()
                 while not ipc.should_exit and ipc.suspended:
                     if os.getppid() == 1:
                         break
-                    time.sleep(0.05)
+                    if not monitor:
+                        time.sleep(0.05)
+                        continue
+                    try:
+                        frame = q.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+                    verifier.feed(frame)
+                    rms = float(np.sqrt(np.mean(frame * frame)))
+                    voiced = rms > max(MIN_RMS, vad.noise * NOISE_MULT)
+                    change = speakers.update(voiced, verifier.is_owner(), time.time())
+                    if change:
+                        ipc.emit("speaker", who=change, score=round(verifier.score(), 2))
+                if stream is not None:
+                    close_stream(stream)
+                    stream = None
                 if ipc.should_exit or os.getppid() == 1:
                     break
                 clear_queue()
@@ -908,13 +1038,37 @@ def main():
                     vad.reset()       # не склеиваем фразу через наш собственный сигнал
                 continue
 
+            if not gera_wake.frame_is_heard(ipc.listen_mode, ipc.busy, ipc.speaking, State.awaiting):
+                # Push-to-talk or «не слушать во время ответа»: микрофон глух.
+                if vad.active:
+                    vad.reset()
+                    tracker.reset()
+                if detector is not None:
+                    detector.reset()
+                continue
+            if verifier is not None:
+                verifier.feed(frame)
+            if detector is not None and detector.feed(frame):
+                on_keyword()
+
             mult = SPEAKING_THRESHOLD_MULT if ipc.speaking else 1.0
             was_active = vad.active
             utt = vad.feed(frame, mult)
             if not was_active and vad.active:
                 utterance_id += 1
                 tracker.reset()
+                if keyword_recent():
+                    tracker.wake_sent = True
+                utt_owner_best = 0.0
                 ipc.emit("utterance_start")
+            if vad.active and verifier is not None:
+                utt_owner_best = max(utt_owner_best, verifier.score())
+            if State.flush:
+                # Hold-to-talk released: the phrase is over, send it now.
+                State.flush = False
+                if vad.active and not pause_handled:
+                    pause_handled = True
+                    send_paused_command()
             if utt is None:
                 if vad.active:
                     drain_partials()
@@ -940,7 +1094,8 @@ def main():
                 print(f"🚫 отсеяно: {payload}", file=sys.stderr, flush=True)
                 ipc.emit("utterance_end", dur=round(duration, 3))
                 continue
-            handle(payload)
+            if whisper_needed():
+                handle(payload)
             ipc.emit("utterance_end", dur=round(duration, 3))
     except KeyboardInterrupt:
         print("\n👋 Завершаю.", file=sys.stderr, flush=True)
@@ -954,4 +1109,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

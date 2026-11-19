@@ -26,6 +26,12 @@ public enum VoiceCommand: Sendable, Equatable {
     case resume
     /// Finish the script.
     case shutdown
+    /// When the ears listen: `always`, `not_while_answering`, `push_to_talk`.
+    case listenMode(String)
+    /// Accept wake words and commands only in the owner's voice.
+    case ownerGate(enabled: Bool)
+    /// Hold-to-talk released: send the phrase now, without waiting for the pause.
+    case flush
 
     /// JSON line for the stdin of the script.
     public var payload: String {
@@ -50,6 +56,12 @@ public enum VoiceCommand: Sendable, Equatable {
             Self.encode(["type": "resume"])
         case .shutdown:
             Self.encode(["type": "shutdown"])
+        case let .listenMode(mode):
+            Self.encode(["type": "listen_mode", "mode": mode])
+        case let .ownerGate(enabled):
+            Self.encode(["type": "owner_gate", "enabled": enabled])
+        case .flush:
+            Self.encode(["type": "flush"])
         }
     }
 

@@ -9,16 +9,22 @@ public extension KeyboardShortcuts.Name {
         default: .init(.space, modifiers: [.control, .option])
     )
 
-    /// Push to talk: behaves like the wake word.
+    /// Talk: a tap works like «Гера», holding keeps the microphone open until release.
     static let pushToTalk = Self(
         "gerania.pushToTalk",
-        default: .init(.v, modifiers: [.control, .option])
+        default: .init(.g, modifiers: [.control, .option])
     )
 
-    /// Interrupts the current turn and stops the speech.
+    /// Stops the answer: the speech and the running turn.
     static let stopAll = Self(
         "gerania.stopAll",
-        default: .init(.period, modifiers: [.control, .option])
+        default: .init(.g, modifiers: [.control, .option, .shift])
+    )
+
+    /// Turns the microphone off and on.
+    static let toggleMicrophone = Self(
+        "gerania.toggleMicrophone",
+        default: .init(.g, modifiers: [.control, .option, .command])
     )
 }
 
